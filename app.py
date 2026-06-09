@@ -1,164 +1,263 @@
 import streamlit as st
 import pandas as pd
-import re
+from langdetect import detect
+import time
 
 # =========================
-# 基础配置
+# 页面配置
 # =========================
-st.set_page_config(page_title="关键词清洗工具", layout="wide")
-
-# =========================
-# 参数（避免 NameError）
-# =========================
-target_language = st.selectbox("目标语言", ["zh", "en", "ja", "ko"], index=0)
-brand_text = st.text_area("品牌词（每行一个，可选）")
-
+st.set_page_config(page_title="关键词筛选工具", layout="wide")
+st.title("🔧 关键词筛选工具")
 
 # =========================
-# 工具函数
+# 语言选项
 # =========================
-def match_language(text, target_language):
-    if pd.isna(text):
-        return False
+language_options = {
+    "en": "英语",
+    "pt": "葡萄牙语",
+    "es": "西班牙语",
+    "de": "德语",
+    "fr": "法语",
+    "it": "意大利语",
+    "ja": "日语",
+    "ko": "韩语",
+    "zh": "中文",
+    "ru": "俄语",
+    "ar": "阿拉伯语"
+}
 
-    text = str(text)
+col1, col2 = st.columns(2)
+with col1:
+    target_language = st.selectbox(
+        "🎯 保留哪种语言",
+        list(language_options.keys()),
+        format_func=lambda x: f"{x} - {language_options[x]}"
+    )
+with col2:
+    skip_lang_detect = st.checkbox(
+        "⚡ 跳过语言检测",
+        value=False,
+        help="如果你的关键词已经是目标语言（比如全是中文），勾选后可大幅提速"
+    )
 
-    if target_language == "zh":
-        return bool(re.search(r'[\u4e00-\u9fff]', text))
+# =========================
+# 品牌词输入
+# =========================
+st.markdown("### 🚫 要删除的品牌词（包含这些词的关键词会被整行删除）")
+brand_text = st.text_area(
+    "支持空格、逗号、换行分隔",
+    height=100,
+    placeholder="格力 tcl 创维 松下 海信 美的 海尔"
+)
 
-    if target_language == "en":
-        return bool(re.search(r'[a-zA-Z]', text))
-
-    if target_language == "ja":
-        return bool(re.search(r'[\u3040-\u30ff\u31f0-\u31ff]', text))
-
-    if target_language == "ko":
-        return bool(re.search(r'[\uac00-\ud7af]', text))
-
-    return True
-
-
-def contains_brand(text, brands):
-    if pd.isna(text):
-        return False
-    text = str(text).lower()
-    return any(b in text for b in brands)
-
+def parse_brands(raw_text: str):
+    if not raw_text:
+        return []
+    lines = raw_text.splitlines()
+    brands = []
+    for line in lines:
+        line = line.replace(',', ' ')
+        parts = line.split()
+        brands.extend(parts)
+    brands = [b.strip().lower() for b in brands if b.strip()]
+    # 去重
+    seen = set()
+    unique = []
+    for b in brands:
+        if b not in seen:
+            seen.add(b)
+            unique.append(b)
+    return unique
 
 # =========================
 # 文件上传
 # =========================
-uploaded_file = st.file_uploader("上传文件（CSV / Excel）", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
+# =========================
+# 核心处理函数（带进度）
+# =========================
+def batch_language_detection(texts, target_lang, progress_bar, status_text):
+    results = []
+    total = len(texts)
+    for i, val in enumerate(texts):
+        if pd.isna(val):
+            results.append(False)
+        else:
+            s = str(val).strip()
+            if len(s) < 3:   # 太短的词保留，避免误判
+                results.append(True)
+            else:
+                try:
+                    results.append(detect(s) == target_lang)
+                except:
+                    results.append(False)
+        if (i+1) % 200 == 0 or i+1 == total:
+            progress_bar.progress((i+1)/total)
+            status_text.text(f"🔍 语言检测中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    return results
+
+def batch_brand_filter(texts, brands, progress_bar, status_text):
+    if not brands:
+        return [True] * len(texts)
+    results = []
+    total = len(texts)
+    removed_examples = []
+    for i, val in enumerate(texts):
+        if pd.isna(val):
+            results.append(True)
+        else:
+            s = str(val).lower()
+            keep = True
+            for brand in brands:
+                if brand in s:
+                    keep = False
+                    if len(removed_examples) < 10:
+                        removed_examples.append(f"「{val}」包含品牌词「{brand}」")
+                    break
+            results.append(keep)
+        if (i+1) % 500 == 0 or i+1 == total:
+            progress_bar.progress((i+1)/total)
+            status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    return results, removed_examples
+
+# =========================
+# 主逻辑
+# =========================
 if uploaded_file is not None:
-
-    # =========================
     # 读取文件
-    # =========================
-    if uploaded_file.name.endswith(".csv"):
-        try:
-            df = pd.read_csv(uploaded_file)
-        except Exception:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding="latin1")
-    else:
-        df = pd.read_excel(uploaded_file)
+    with st.spinner("读取文件中..."):
+        if uploaded_file.name.endswith(".csv"):
+            try:
+                df = pd.read_csv(uploaded_file)
+            except:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, encoding="latin1")
+        else:
+            df = pd.read_excel(uploaded_file)
+        df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
 
-    # =========================
-    # 清理列名
-    # =========================
-    df.columns = (
-        df.columns.astype(str)
-        .str.strip()
-        .str.replace("\ufeff", "", regex=False)
-    )
+    st.success(f"✅ 文件读取成功，共 {len(df)} 行")
+    st.write("实际列名：", df.columns.tolist())
 
-    st.write("📌 实际列名：")
-    st.write(df.columns.tolist())
-
-    # =========================
-    # 必要列
-    # =========================
-    keep_columns = [
-        "原搜索词",
-        "英文语义",
-        "检测语言",
-        "访问用户",
-        "安装用户",
-        "转化率"
-    ]
-
-    missing = [c for c in keep_columns if c not in df.columns]
-
-    if missing:
-        st.error(f"缺少列: {missing}")
-        st.stop()
-
-    df = df[keep_columns].copy()
-
+    keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
     original_count = len(df)
 
-    # =========================
-    # 语言过滤
-    # =========================
-    lang_filtered = df[
-        df["原搜索词"].apply(
-            lambda x: match_language(x, target_language)
-        )
-    ].copy()
-
-    removed_language = original_count - len(lang_filtered)
-
-    # =========================
-    # 品牌词过滤
-    # =========================
-    brands = [
-        x.strip().lower()
-        for x in brand_text.splitlines()
-        if x.strip()
-    ]
-
-    before_brand = len(lang_filtered)
-
+    # 解析品牌词
+    brands = parse_brands(brand_text)
     if brands:
-        lang_filtered = lang_filtered[
-            ~lang_filtered["原搜索词"].apply(
-                lambda x: contains_brand(x, brands)
+        st.success(f"🔍 识别到的品牌词（将删除包含它们的行）：**{', '.join(brands)}**")
+    else:
+        st.info("未输入品牌词，将跳过品牌过滤")
+
+    # 显示原始数据前20行
+    with st.expander("📋 点击查看原始数据前20行"):
+        st.dataframe(df.head(20))
+
+    st.markdown("---")
+    start_btn = st.button("🚀 一键启动筛选", type="primary", use_container_width=True)
+
+    if start_btn:
+        working_df = df.copy()
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        removed_lang = 0
+        removed_brand = 0
+        removed_dup = 0
+        removed_lang_examples = []
+        removed_brand_examples = []
+
+        # ---------- 1. 语言过滤 ----------
+        if not skip_lang_detect:
+            status_text.text("准备语言检测...")
+            time.sleep(0.3)
+            texts = working_df[keyword_column].tolist()
+            keep_mask = batch_language_detection(texts, target_language, progress_bar, status_text)
+            # 收集被语言检测删除的样例
+            for i, (val, keep) in enumerate(zip(texts, keep_mask)):
+                if not keep and len(removed_lang_examples) < 10:
+                    removed_lang_examples.append(f"「{val}」不是目标语言")
+            before = len(working_df)
+            working_df = working_df[keep_mask].copy()
+            removed_lang = before - len(working_df)
+            status_text.text(f"✅ 语言过滤完成：删除 {removed_lang} 条，剩余 {len(working_df)} 条")
+            time.sleep(0.5)
+            progress_bar.empty()
+            progress_bar = st.progress(0)
+        else:
+            status_text.text("⏭️ 跳过语言检测")
+            time.sleep(0.5)
+
+        # ---------- 2. 品牌过滤 ----------
+        if brands:
+            status_text.text("准备品牌过滤...")
+            time.sleep(0.3)
+            texts = working_df[keyword_column].tolist()
+            keep_mask, removed_brand_examples = batch_brand_filter(texts, brands, progress_bar, status_text)
+            before = len(working_df)
+            working_df = working_df[keep_mask].copy()
+            removed_brand = before - len(working_df)
+            status_text.text(f"✅ 品牌过滤完成：删除 {removed_brand} 条，剩余 {len(working_df)} 条")
+            time.sleep(0.5)
+            progress_bar.empty()
+            progress_bar = st.progress(0)
+        else:
+            status_text.text("⏭️ 未输入品牌词，跳过品牌过滤")
+            time.sleep(0.5)
+
+        # ---------- 3. 去重 ----------
+        status_text.text("准备去重...")
+        time.sleep(0.3)
+        before = len(working_df)
+        for p in range(0, 101, 25):
+            progress_bar.progress(p/100)
+            status_text.text(f"🔄 去重中... {p}%")
+            time.sleep(0.03)
+        working_df = working_df.drop_duplicates(subset=[keyword_column]).copy()
+        removed_dup = before - len(working_df)
+        status_text.text(f"✅ 去重完成：删除 {removed_dup} 条，剩余 {len(working_df)} 条")
+        time.sleep(0.5)
+        progress_bar.progress(1.0)
+        status_text.text("🎉 处理完成！")
+
+        # ---------- 显示被删除样例 ----------
+        if removed_lang_examples:
+            with st.expander("🔍 被语言检测删除的关键词样例（前10个）"):
+                for ex in removed_lang_examples:
+                    st.write(f"- {ex}")
+        if removed_brand_examples:
+            with st.expander("🔍 被品牌过滤删除的关键词样例（前10个）"):
+                for ex in removed_brand_examples:
+                    st.write(f"- {ex}")
+
+        # ---------- 结果汇总 ----------
+        st.markdown("---")
+        st.subheader("📈 处理结果汇总")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("原始关键词", original_count)
+        c2.metric("删除的非目标语言", removed_lang if not skip_lang_detect else "跳过")
+        c3.metric("删除的品牌词", removed_brand)
+        c4.metric("删除的重复词", removed_dup)
+        st.success(f"✨ 最终剩余关键词：{len(working_df)} 条")
+
+        # 预览结果
+        with st.expander("🔍 点击预览结果（前100行）"):
+            st.dataframe(working_df.head(100))
+
+        # 下载
+        if len(working_df) > 0:
+            csv_data = working_df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="📥 下载结果 CSV",
+                data=csv_data,
+                file_name="filtered_keywords.csv",
+                mime="text/csv",
+                use_container_width=True
             )
-        ]
-
-    removed_brand = before_brand - len(lang_filtered)
-
-    # =========================
-    # 去重
-    # =========================
-    before_dedup = len(lang_filtered)
-
-    lang_filtered = lang_filtered.drop_duplicates(subset=["原搜索词"])
-
-    removed_dup = before_dedup - len(lang_filtered)
-
-    # =========================
-    # 输出结果
-    # =========================
-    st.subheader("处理结果")
-
-    st.write(f"原始关键词：{original_count}")
-    st.write(f"删除非目标语言：{removed_language}")
-    st.write(f"删除品牌词：{removed_brand}")
-    st.write(f"删除重复词：{removed_dup}")
-    st.write(f"剩余关键词：{len(lang_filtered)}")
-
-    st.dataframe(lang_filtered.head(50))
-
-    # =========================
-    # 下载
-    # =========================
-    csv_data = lang_filtered.to_csv(index=False).encode("utf-8-sig")
-
-    st.download_button(
-        "下载结果 CSV",
-        csv_data,
-        file_name="filtered_keywords.csv",
-        mime="text/csv"
-    )
+        else:
+            st.warning("⚠️ 没有剩余关键词，请检查过滤条件是否过严")
+    else:
+        st.info("👆 点击上方按钮开始处理数据")
+else:
+    st.info("📁 请先上传 CSV 或 Excel 文件")
