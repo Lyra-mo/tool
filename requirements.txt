@@ -2,4 +2,4 @@ streamlit
 pandas
 openpyxl
 langdetect
-cld2-cffi
+pycld2
