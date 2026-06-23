@@ -9,5 +9,5 @@ RUN pip install -r requirements.txt
 # 复制代码
 COPY app.py .
 
-# 启动
-CMD streamlit run app.py --server.port=10000 --server.address=0.0.0.0
+# 使用 exec 形式，并绑定到 Render 的 PORT 环境变量
+CMD exec streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
