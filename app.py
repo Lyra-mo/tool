@@ -73,69 +73,130 @@ uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv"
 # =========================
 # 语言检测函数
 # =========================
-def is_english(text: str) -> bool:
+def is_target_language(text: str, target_lang: str) -> bool:
+    """
+    检测文本是否为目标语言
+    使用 LibreTranslate API 检测
+    """
     if not text or len(text.strip()) < 2:
         return True
+    
     s = text.strip()
     
-    # 检查非拉丁字符
-    non_latin_pattern = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]')
-    if non_latin_pattern.search(s):
-        return False
+    # ===== 第一关：快速字符集检测 =====
+    if target_lang == "en":
+        # 英语：检查非拉丁字符和变音符号
+        non_latin_pattern = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]')
+        if non_latin_pattern.search(s):
+            return False
+        accent_pattern = re.compile(r'[áéíóúñüçãõàèìòù]', re.IGNORECASE)
+        if accent_pattern.search(s):
+            return False
     
-    # 检查变音符号
-    accent_pattern = re.compile(r'[áéíóúñüçãõàèìòù]', re.IGNORECASE)
-    if accent_pattern.search(s):
-        return False
-    
-    # LibreTranslate API
+    # ===== 第二关：LibreTranslate API 检测 =====
     try:
-        response = requests.post("https://libretranslate.com/detect", json={"q": s}, timeout=3)
+        response = requests.post(
+            "https://libretranslate.com/detect",
+            json={"q": s},
+            timeout=3
+        )
         if response.status_code == 200:
             result = response.json()
             if result and len(result) > 0:
                 best = result[0]
-                return best.get("language") == "en" and best.get("confidence", 0) > 0.7
-    except:
+                detected = best.get("language")
+                confidence = best.get("confidence", 0)
+                
+                # 判断是否为目标语言，置信度阈值 > 0.5
+                return detected == target_lang and confidence > 0.5
+    except Exception as e:
         pass
     
-    # 字符集兜底
+    # ===== 第三关：字符集兜底 =====
     english_letters = len(re.findall(r'[a-zA-Z]', s))
     total_chars = len(re.sub(r'[0-9\s\W_]', '', s))
     if total_chars == 0:
         return True
-    return english_letters / total_chars > 0.7
+    
+    if target_lang == "en":
+        return english_letters / total_chars > 0.7
+    
+    return True
+
+def batch_language_detection(texts, target_lang, progress_bar, status_text):
+    """批量语言检测"""
+    results = []
+    total = len(texts)
+    
+    for i, val in enumerate(texts):
+        if pd.isna(val):
+            s = ""
+        else:
+            s = str(val).strip()
+        
+        if len(s) < 2:
+            results.append(True)
+        else:
+            results.append(is_target_language(s, target_lang))
+        
+        if (i+1) % 200 == 0 or i+1 == total:
+            progress_bar.progress((i+1)/total)
+            status_text.text(f"🔍 语言检测中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    
+    return results
 
 # =========================
-# 智能读取文件（增强版）
+# 品牌过滤函数
+# =========================
+def batch_brand_filter(texts, brands, progress_bar, status_text):
+    if not brands:
+        return [True] * len(texts), []
+    
+    results = []
+    total = len(texts)
+    removed_examples = []
+    
+    for i, val in enumerate(texts):
+        if pd.isna(val):
+            results.append(True)
+        else:
+            s = str(val).lower().strip()
+            keep = True
+            for brand in brands:
+                if s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}") or f" {brand} " in f" {s} ":
+                    keep = False
+                    if len(removed_examples) < 10:
+                        removed_examples.append(f"「{val}」包含品牌词「{brand}」")
+                    break
+            results.append(keep)
+        
+        if (i+1) % 500 == 0 or i+1 == total:
+            progress_bar.progress((i+1)/total)
+            status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    
+    return results, removed_examples
+
+# =========================
+# 智能读取文件
 # =========================
 def read_file_smart(uploaded_file):
     """自动检测编码和分隔符，智能读取 CSV"""
     if uploaded_file.name.endswith(('.xlsx', '.xls')):
         return pd.read_excel(uploaded_file)
     
-    # 尝试多种编码
     encodings = ['utf-8', 'utf-8-sig', 'utf-16', 'latin1', 'cp1252']
-    # 尝试多种分隔符
     separators = [',', '\t', ';', '|', ' ']
     
     for encoding in encodings:
         for sep in separators:
             try:
                 uploaded_file.seek(0)
-                df = pd.read_csv(
-                    uploaded_file, 
-                    encoding=encoding, 
-                    sep=sep,
-                    engine='python'
-                )
-                # 检查是否成功解析出多列（列名大于1说明解析成功）
+                df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep, engine='python')
                 if len(df.columns) > 1:
                     return df
             except Exception:
                 continue
     
-    # 最后尝试用自动检测分隔符的方式
     uploaded_file.seek(0)
     try:
         df = pd.read_csv(uploaded_file, encoding='utf-8', sep=None, engine='python')
@@ -157,14 +218,11 @@ if uploaded_file is None:
     st.info("📁 请先上传 CSV 或 Excel 文件，然后点击下方按钮开始处理")
     st.stop()
 
-# ===== 读取文件 =====
 df = read_file_smart(uploaded_file)
 if df is None:
     st.stop()
 
 st.success(f"✅ 文件读取成功，共 {len(df)} 行，{len(df.columns)} 列")
-
-# 显示列名供用户确认
 st.write("📋 检测到的列名：", df.columns.tolist())
 
 keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
@@ -177,24 +235,24 @@ start_btn = st.button("🚀 一键启动筛选", type="primary", use_container_w
 
 if start_btn:
     with st.spinner("正在筛选..."):
-        texts = df[keyword_column].tolist()
-        results = []
-        for text in texts:
-            results.append(is_english(str(text)) if target_language == "en" else True)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        df_filtered = df[results].copy()
+        texts = df[keyword_column].tolist()
+        keep_mask = batch_language_detection(texts, target_language, progress_bar, status_text)
+        
+        df_filtered = df[keep_mask].copy()
+        progress_bar.progress(1.0)
+        status_text.text("✅ 语言检测完成")
         
         # 品牌过滤
         if brands:
-            keep_mask = []
-            for val in df_filtered[keyword_column].tolist():
-                s = str(val).lower().strip()
-                keep = True
-                for brand in brands:
-                    if s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}") or f" {brand} " in f" {s} ":
-                        keep = False
-                        break
-                keep_mask.append(keep)
+            keep_mask, _ = batch_brand_filter(
+                df_filtered[keyword_column].tolist(), 
+                brands, 
+                progress_bar, 
+                status_text
+            )
             df_filtered = df_filtered[keep_mask].copy()
         
         # 去重
