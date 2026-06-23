@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import time
 import re
-import pycld2 as cld2
+import os
+import deepl
 
 # =========================
 # 页面配置
@@ -75,37 +76,64 @@ def parse_brands(raw_text: str):
 uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
 # =========================
-# 🔧 核心：pycld2 语言检测
+# 🔧 核心：DeepLX 语言检测
 # =========================
-def is_target_language(text: str, target_lang: str) -> bool:
+
+# 初始化 DeepLX 客户端
+DEEPLX_URL = os.getenv("DEEPLX_URL", "http://localhost:1188")
+try:
+    deepl_client = deepl.DeepLClient(
+        auth_key="随便填",  # DeepLX 不需要认证
+        server_url=DEEPLX_URL
+    )
+    st.success("✅ DeepLX 服务连接成功")
+except Exception as e:
+    st.warning(f"⚠️ DeepLX 服务未连接，将使用备用检测方案: {e}")
+    deepl_client = None
+
+def is_english(text: str) -> bool:
     """
-    使用 pycld2 检测文本是否为目标语言
+    使用 DeepLX 检测文本是否为英语
     """
     if not text or len(text.strip()) < 2:
         return True
     
-    try:
-        # pycld2.detect 返回 (是否可靠, 检测到的文本, 详细结果列表)
-        is_reliable, text_bytes, details = cld2.detect(text)
-        
-        # 如果检测不可靠，保守保留
-        if not is_reliable:
-            return True
-        
-        # 遍历检测到的所有语言
-        for detail in details:
-            # pycld2 的 detail 格式: (语言代码, 语言名称, 百分比, 得分)
-            lang_code = detail[0]  # 语言代码在元组的第1个元素
-            percent = detail[2]    # 百分比在第3个元素
-            
-            if lang_code == target_lang and percent > 50:
-                return True
-        
+    s = text.strip()
+    
+    # ===== 第一关：快速字符集检测 =====
+    # 1. 检查是否包含非拉丁字符（中文、日文、韩文、阿拉伯文、俄文等）
+    non_latin_pattern = re.compile(
+        r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]'
+    )
+    if non_latin_pattern.search(s):
         return False
-        
-    except Exception as e:
-        # 检测失败时保守保留
+    
+    # 2. 检查是否包含拉丁变音符号（西班牙语、法语、葡萄牙语等）
+    accent_pattern = re.compile(r'[áéíóúñüçãõàèìòù]', re.IGNORECASE)
+    if accent_pattern.search(s):
+        return False
+    
+    # ===== 第二关：DeepLX 检测 =====
+    if deepl_client:
+        try:
+            result = deepl_client.translate_text(
+                s,
+                target_lang="FR",  # 目标语言随意，不影响检测
+                split_sentences="off"
+            )
+            return result.detected_source_lang == "EN"
+        except Exception as e:
+            # DeepLX 调用失败，用字符集兜底
+            pass
+    
+    # ===== 第三关：字符集兜底 =====
+    # 统计英文字母占比
+    english_letters = len(re.findall(r'[a-zA-Z]', s))
+    total_chars = len(re.sub(r'[0-9\s\W_]', '', s))
+    if total_chars == 0:
         return True
+    ratio = english_letters / total_chars
+    return ratio > 0.7
 
 def batch_language_detection(texts, target_lang, progress_bar, status_text):
     """批量语言检测"""
@@ -118,7 +146,7 @@ def batch_language_detection(texts, target_lang, progress_bar, status_text):
         else:
             s = str(val).strip()
         
-        results.append(is_target_language(s, target_lang))
+        results.append(is_english(s) if target_lang == "en" else True)
         
         if (i+1) % 200 == 0 or i+1 == total:
             progress_bar.progress((i+1)/total)
