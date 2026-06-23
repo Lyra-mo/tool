@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from langdetect import detect
 import time
+import re
 
 # =========================
 # 页面配置
@@ -60,7 +61,6 @@ def parse_brands(raw_text: str):
         parts = line.split()
         brands.extend(parts)
     brands = [b.strip().lower() for b in brands if b.strip()]
-    # 去重
     seen = set()
     unique = []
     for b in brands:
@@ -75,34 +75,63 @@ def parse_brands(raw_text: str):
 uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
 # =========================
-# 核心处理函数（带进度）
+# 🔧 修复后的语言检测函数
 # =========================
 def batch_language_detection(texts, target_lang, progress_bar, status_text):
+    """修复版：不跳过空值，检测失败时用字符集兜底"""
     results = []
     total = len(texts)
+    
     for i, val in enumerate(texts):
+        # 统一转为字符串，空值也处理
         if pd.isna(val):
-            results.append(False)
+            s = ""
         else:
             s = str(val).strip()
-            if len(s) < 3:   # 太短的词保留，避免误判
-                results.append(True)
-            else:
-                try:
-                    results.append(detect(s) == target_lang)
-                except:
+        
+        # 空字符串或太短（<2个字符）→ 保留，让后续去重处理
+        if len(s) < 2:
+            results.append(True)
+        else:
+            try:
+                # 用 langdetect 检测
+                detected = detect(s)
+                results.append(detected == target_lang)
+            except:
+                # ⚡ 检测失败时，用字符集兜底判断
+                # 统计英文字母占比
+                letters_only = re.sub(r'[^a-zA-Z]', '', s)
+                if len(letters_only) == 0:
+                    # 没有英文字母 → 非英语，删除
                     results.append(False)
+                else:
+                    # 计算英文字母占所有字母的比例
+                    all_letters = re.findall(r'[a-zA-ZÀ-ÿ]', s)
+                    if len(all_letters) == 0:
+                        results.append(False)
+                    else:
+                        ratio = len(letters_only) / len(all_letters)
+                        # 如果目标是英语，英文字母占比 > 70% 就保留
+                        results.append(ratio > 0.7 if target_lang == "en" else True)
+        
+        # 更新进度
         if (i+1) % 200 == 0 or i+1 == total:
             progress_bar.progress((i+1)/total)
             status_text.text(f"🔍 语言检测中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    
     return results
 
+# =========================
+# 品牌过滤函数（优化版）
+# =========================
 def batch_brand_filter(texts, brands, progress_bar, status_text):
     if not brands:
         return [True] * len(texts), []
+    
     results = []
     total = len(texts)
     removed_examples = []
+    
     for i, val in enumerate(texts):
         if pd.isna(val):
             results.append(True)
@@ -110,33 +139,33 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
             s = str(val).lower()
             keep = True
             for brand in brands:
-                if brand in s:
+                # 🔧 用完整词匹配，避免误杀短词
+                if f" {brand} " in f" {s} " or s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}"):
                     keep = False
                     if len(removed_examples) < 10:
                         removed_examples.append(f"「{val}」包含品牌词「{brand}」")
                     break
             results.append(keep)
+        
         if (i+1) % 500 == 0 or i+1 == total:
             progress_bar.progress((i+1)/total)
             status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int((i+1)/total*100)}%)")
+    
     return results, removed_examples
 
 # =========================
-# 智能读取 CSV（自动识别分隔符和编码）
+# 智能读取 CSV
 # =========================
 def read_csv_smart(uploaded_file):
     """智能读取 CSV，自动尝试多种分隔符和编码"""
-    # 先尝试用 Python 引擎自动检测分隔符
     uploaded_file.seek(0)
     try:
-        # 读取前几行让 pandas 自动检测
         df = pd.read_csv(uploaded_file, encoding="utf-8", engine="python", sep=None)
         if len(df.columns) > 1:
             return df
     except:
         pass
     
-    # 尝试多种编码和分隔符组合
     encodings = ["utf-8", "latin1", "gbk", "gb2312", "cp936", "utf-16"]
     separators = [",", ";", "\t", "|", " "]
     
@@ -145,13 +174,11 @@ def read_csv_smart(uploaded_file):
             try:
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep)
-                # 检查是否成功读取了多列
                 if len(df.columns) > 1:
                     return df
             except:
                 continue
     
-    # 最后兜底：用 python 引擎 + 自动检测，忽略错误行
     uploaded_file.seek(0)
     try:
         df = pd.read_csv(
@@ -159,14 +186,13 @@ def read_csv_smart(uploaded_file):
             encoding="utf-8", 
             engine="python", 
             sep=None,
-            on_bad_lines="skip"  # 跳过有问题行
+            on_bad_lines="skip"
         )
         if len(df.columns) > 1:
             return df
     except:
         pass
     
-    # 实在读不出来，返回空
     return None
 
 # =========================
@@ -195,14 +221,12 @@ if uploaded_file is not None:
     keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
     original_count = len(df)
 
-    # 解析品牌词
     brands = parse_brands(brand_text)
     if brands:
         st.success(f"🔍 识别到的品牌词（将删除包含它们的行）：**{', '.join(brands)}**")
     else:
         st.info("未输入品牌词，将跳过品牌过滤")
 
-    # 显示原始数据前20行
     with st.expander("📋 点击查看原始数据前20行"):
         st.dataframe(df.head(20))
 
@@ -226,10 +250,13 @@ if uploaded_file is not None:
             time.sleep(0.3)
             texts = working_df[keyword_column].tolist()
             keep_mask = batch_language_detection(texts, target_language, progress_bar, status_text)
-            # 收集被语言检测删除的样例
+            
+            # 收集被删除的样例
             for i, (val, keep) in enumerate(zip(texts, keep_mask)):
                 if not keep and len(removed_lang_examples) < 10:
-                    removed_lang_examples.append(f"「{val}」不是目标语言")
+                    s = str(val) if not pd.isna(val) else ""
+                    removed_lang_examples.append(f"「{s}」不是目标语言")
+            
             before = len(working_df)
             working_df = working_df[keep_mask].copy()
             removed_lang = before - len(working_df)
@@ -293,11 +320,9 @@ if uploaded_file is not None:
         c4.metric("删除的重复词", removed_dup)
         st.success(f"✨ 最终剩余关键词：{len(working_df)} 条")
 
-        # 预览结果
         with st.expander("🔍 点击预览结果（前100行）"):
             st.dataframe(working_df.head(100))
 
-        # 下载
         if len(working_df) > 0:
             csv_data = working_df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
