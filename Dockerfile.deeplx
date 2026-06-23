@@ -1,3 +1,0 @@
-FROM ghcr.io/owo-network/deeplx:latest
-EXPOSE 1188
-CMD ["./DeepLX", "--port", "1188"]
