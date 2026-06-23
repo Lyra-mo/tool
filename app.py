@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import re
+from langdetect import detect
 
 # =========================
 # 页面配置
@@ -74,41 +75,50 @@ def parse_brands(raw_text: str):
 uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
 # =========================
-# 🔧 核心：基于字符集的语言检测（不依赖 langdetect）
+# 🔧 核心：双重检测（字符集 + langdetect）
 # =========================
 def is_english(text: str) -> bool:
     """
-    判断文本是否为英语
-    规则：
-    1. 如果包含非拉丁字母（如中文、日文、阿拉伯文、西里尔文）→ 非英语
-    2. 如果包含变音符号（如 é, ñ, ü）→ 非英语
-    3. 剩余情况，英文字母占比 > 60% → 英语
+    双重检测判断文本是否为英语
+    第一关：字符集检测（快速过滤非拉丁字符和变音符号）
+    第二关：langdetect 语义检测（精准识别 proyector 这类词）
     """
     if not text or len(text.strip()) == 0:
         return True
     
     s = text.strip()
     
-    # 检查是否包含非拉丁字符（中文、日文、韩文、阿拉伯文、西里尔文等）
-    # Unicode 范围：
-    # 中文：\u4e00-\u9fff
-    # 日文：\u3040-\u30ff
-    # 韩文：\uac00-\ud7af
-    # 阿拉伯文：\u0600-\u06ff
-    # 西里尔文（俄语）：\u0400-\u04ff
+    # ===== 第一关：字符集检测 =====
+    
+    # 1. 检查是否包含非拉丁字符（中文、日文、韩文、阿拉伯文、俄文等）
     non_latin_pattern = re.compile(
         r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]'
     )
     if non_latin_pattern.search(s):
         return False
     
-    # 检查是否包含拉丁变音符号（西班牙语、法语、葡萄牙语等）
-    # 如：á é í ó ú ñ ü ç ã õ à è ì ò ù
+    # 2. 检查是否包含拉丁变音符号（西班牙语、法语、葡萄牙语等）
     accent_pattern = re.compile(r'[áéíóúñüçãõàèìòù]', re.IGNORECASE)
     if accent_pattern.search(s):
         return False
     
-    # 统计英文字母占比
+    # ===== 第二关：langdetect 语义检测 =====
+    # 只对长度 > 3 的词进行检测（短词 langdetect 不准）
+    if len(s) > 3:
+        try:
+            detected = detect(s)
+            return detected == "en"
+        except:
+            # langdetect 检测失败时，用字符集兜底
+            pass
+    
+    # ===== 兜底：英文字母占比检测 =====
+    # 移除数字、空格、标点，只看字母
+    letters_only = re.sub(r'[^a-zA-Z]', '', s)
+    if len(letters_only) == 0:
+        return True
+    
+    # 统计英文字母占比（针对可能包含少量特殊字符的情况）
     total_chars = len(re.sub(r'[0-9\s\W_]', '', s))
     if total_chars == 0:
         return True
@@ -120,7 +130,7 @@ def is_english(text: str) -> bool:
     return ratio > 0.6
 
 def batch_language_detection(texts, target_lang, progress_bar, status_text):
-    """基于字符集的语言检测，不依赖 langdetect"""
+    """批量语言检测"""
     results = []
     total = len(texts)
     
@@ -135,11 +145,9 @@ def batch_language_detection(texts, target_lang, progress_bar, status_text):
             results.append(True)
         else:
             if target_lang == "en":
-                # 只保留英语
                 results.append(is_english(s))
             else:
-                # 其他语言：只保留该语言的（简化处理，主要针对英语场景）
-                # 这里简单判断：如果目标是其他语言，暂时全部保留
+                # 非英语目标语言（简化处理）
                 results.append(True)
         
         if (i+1) % 200 == 0 or i+1 == total:
@@ -149,7 +157,7 @@ def batch_language_detection(texts, target_lang, progress_bar, status_text):
     return results
 
 # =========================
-# 品牌过滤函数（精确匹配）
+# 品牌过滤函数
 # =========================
 def batch_brand_filter(texts, brands, progress_bar, status_text):
     if not brands:
@@ -166,7 +174,7 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
             s = str(val).lower().strip()
             keep = True
             for brand in brands:
-                # 完整词匹配（避免误杀）
+                # 精确匹配（避免误杀）
                 if s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}") or f" {brand} " in f" {s} ":
                     keep = False
                     if len(removed_examples) < 10:
@@ -282,7 +290,7 @@ if uploaded_file is not None:
             for i, (val, keep) in enumerate(zip(texts, keep_mask)):
                 if not keep and len(removed_lang_examples) < 10:
                     s = str(val) if not pd.isna(val) else ""
-                    removed_lang_examples.append(f"「{s}」不是目标语言（含非英文字符）")
+                    removed_lang_examples.append(f"「{s}」不是目标语言")
             
             before = len(working_df)
             working_df = working_df[keep_mask].copy()
