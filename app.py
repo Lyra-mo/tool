@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import re
-import cld2
+import pycld2 as cld2
 
 # =========================
 # 页面配置
@@ -75,55 +75,32 @@ def parse_brands(raw_text: str):
 uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
 # =========================
-# 🔧 核心：cld2 语言检测
+# 🔧 核心：pycld2 语言检测
 # =========================
-
-# 语言代码映射（cld2 返回的语言名 → 标准代码）
-LANG_NAME_TO_CODE = {
-    "english": "en",
-    "spanish": "es",
-    "portuguese": "pt",
-    "french": "fr",
-    "german": "de",
-    "italian": "it",
-    "japanese": "ja",
-    "korean": "ko",
-    "chinese": "zh",
-    "russian": "ru",
-    "arabic": "ar"
-}
-
 def is_target_language(text: str, target_lang: str) -> bool:
     """
-    使用 cld2 检测文本是否为目标语言
+    使用 pycld2 检测文本是否为目标语言
     """
     if not text or len(text.strip()) < 2:
         return True
     
     try:
-        # cld2.detect 返回 (是否可靠, 检测到的文本, 详细结果列表)
+        # pycld2.detect 返回 (是否可靠, 检测到的文本, 详细结果列表)
         is_reliable, text_bytes, details = cld2.detect(text)
         
         # 如果检测不可靠，保守保留
         if not is_reliable:
             return True
         
-        # 遍历检测到的所有语言（cld2 支持混合语言检测）
+        # 遍历检测到的所有语言
         for detail in details:
-            # 获取语言名称（如 "ENGLISH"），转为小写
-            lang_name = detail.language_name.lower()
+            # pycld2 的 detail 格式: (语言代码, 语言名称, 百分比, 得分)
+            lang_code = detail[0]  # 语言代码在元组的第1个元素
+            percent = detail[2]    # 百分比在第3个元素
             
-            # 如果目标语言是英语
-            if target_lang == "en":
-                # 只要检测到英语且占比 > 50%，就认为是英语
-                if lang_name == "english" and detail.percent > 50:
-                    return True
-            else:
-                # 非英语目标语言：检测到目标语言且占比 > 50%
-                if lang_name == LANG_NAME_TO_CODE.get(target_lang, "") and detail.percent > 50:
-                    return True
+            if lang_code == target_lang and percent > 50:
+                return True
         
-        # 没有检测到目标语言
         return False
         
     except Exception as e:
