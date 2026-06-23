@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import time
 import re
-from langdetect import detect
+import cld2
 
 # =========================
 # 页面配置
@@ -75,59 +75,60 @@ def parse_brands(raw_text: str):
 uploaded_file = st.file_uploader("📂 上传 CSV 或 Excel 文件", type=["csv", "xlsx", "xls"])
 
 # =========================
-# 🔧 核心：双重检测（字符集 + langdetect）
+# 🔧 核心：cld2 语言检测
 # =========================
-def is_english(text: str) -> bool:
+
+# 语言代码映射（cld2 返回的语言名 → 标准代码）
+LANG_NAME_TO_CODE = {
+    "english": "en",
+    "spanish": "es",
+    "portuguese": "pt",
+    "french": "fr",
+    "german": "de",
+    "italian": "it",
+    "japanese": "ja",
+    "korean": "ko",
+    "chinese": "zh",
+    "russian": "ru",
+    "arabic": "ar"
+}
+
+def is_target_language(text: str, target_lang: str) -> bool:
     """
-    双重检测判断文本是否为英语
-    第一关：字符集检测（快速过滤非拉丁字符和变音符号）
-    第二关：langdetect 语义检测（精准识别 proyector 这类词）
+    使用 cld2 检测文本是否为目标语言
     """
-    if not text or len(text.strip()) == 0:
+    if not text or len(text.strip()) < 2:
         return True
     
-    s = text.strip()
-    
-    # ===== 第一关：字符集检测 =====
-    
-    # 1. 检查是否包含非拉丁字符（中文、日文、韩文、阿拉伯文、俄文等）
-    non_latin_pattern = re.compile(
-        r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff]'
-    )
-    if non_latin_pattern.search(s):
+    try:
+        # cld2.detect 返回 (是否可靠, 检测到的文本, 详细结果列表)
+        is_reliable, text_bytes, details = cld2.detect(text)
+        
+        # 如果检测不可靠，保守保留
+        if not is_reliable:
+            return True
+        
+        # 遍历检测到的所有语言（cld2 支持混合语言检测）
+        for detail in details:
+            # 获取语言名称（如 "ENGLISH"），转为小写
+            lang_name = detail.language_name.lower()
+            
+            # 如果目标语言是英语
+            if target_lang == "en":
+                # 只要检测到英语且占比 > 50%，就认为是英语
+                if lang_name == "english" and detail.percent > 50:
+                    return True
+            else:
+                # 非英语目标语言：检测到目标语言且占比 > 50%
+                if lang_name == LANG_NAME_TO_CODE.get(target_lang, "") and detail.percent > 50:
+                    return True
+        
+        # 没有检测到目标语言
         return False
-    
-    # 2. 检查是否包含拉丁变音符号（西班牙语、法语、葡萄牙语等）
-    accent_pattern = re.compile(r'[áéíóúñüçãõàèìòù]', re.IGNORECASE)
-    if accent_pattern.search(s):
-        return False
-    
-    # ===== 第二关：langdetect 语义检测 =====
-    # 只对长度 > 3 的词进行检测（短词 langdetect 不准）
-    if len(s) > 3:
-        try:
-            detected = detect(s)
-            return detected == "en"
-        except:
-            # langdetect 检测失败时，用字符集兜底
-            pass
-    
-    # ===== 兜底：英文字母占比检测 =====
-    # 移除数字、空格、标点，只看字母
-    letters_only = re.sub(r'[^a-zA-Z]', '', s)
-    if len(letters_only) == 0:
+        
+    except Exception as e:
+        # 检测失败时保守保留
         return True
-    
-    # 统计英文字母占比（针对可能包含少量特殊字符的情况）
-    total_chars = len(re.sub(r'[0-9\s\W_]', '', s))
-    if total_chars == 0:
-        return True
-    
-    english_letters = len(re.findall(r'[a-zA-Z]', s))
-    ratio = english_letters / total_chars
-    
-    # 英文字母占比 > 60% 视为英语
-    return ratio > 0.6
 
 def batch_language_detection(texts, target_lang, progress_bar, status_text):
     """批量语言检测"""
@@ -140,15 +141,7 @@ def batch_language_detection(texts, target_lang, progress_bar, status_text):
         else:
             s = str(val).strip()
         
-        # 空或太短 → 保留
-        if len(s) < 2:
-            results.append(True)
-        else:
-            if target_lang == "en":
-                results.append(is_english(s))
-            else:
-                # 非英语目标语言（简化处理）
-                results.append(True)
+        results.append(is_target_language(s, target_lang))
         
         if (i+1) % 200 == 0 or i+1 == total:
             progress_bar.progress((i+1)/total)
