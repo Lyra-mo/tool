@@ -107,28 +107,44 @@ def is_english(text: str) -> bool:
     return english_letters / total_chars > 0.7
 
 # =========================
-# 智能读取文件
+# 智能读取文件（增强版）
 # =========================
 def read_file_smart(uploaded_file):
-    """自动检测编码并读取文件"""
+    """自动检测编码和分隔符，智能读取 CSV"""
     if uploaded_file.name.endswith(('.xlsx', '.xls')):
         return pd.read_excel(uploaded_file)
     
-    # CSV 文件：尝试多种编码
-    encodings = ['utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'latin1', 'cp1252']
+    # 尝试多种编码
+    encodings = ['utf-8', 'utf-8-sig', 'utf-16', 'latin1', 'cp1252']
+    # 尝试多种分隔符
+    separators = [',', '\t', ';', '|', ' ']
     
     for encoding in encodings:
-        try:
-            uploaded_file.seek(0)
-            df = pd.read_csv(uploaded_file, encoding=encoding)
-            return df
-        except UnicodeDecodeError:
-            continue
-        except Exception:
-            continue
+        for sep in separators:
+            try:
+                uploaded_file.seek(0)
+                df = pd.read_csv(
+                    uploaded_file, 
+                    encoding=encoding, 
+                    sep=sep,
+                    engine='python'
+                )
+                # 检查是否成功解析出多列（列名大于1说明解析成功）
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
     
-    # 所有编码都失败
-    st.error("❌ 无法识别文件编码，请确保文件为 UTF-8 或 UTF-16 编码")
+    # 最后尝试用自动检测分隔符的方式
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file, encoding='utf-8', sep=None, engine='python')
+        if len(df.columns) > 1:
+            return df
+    except Exception:
+        pass
+    
+    st.error("❌ 无法解析文件，请确认分隔符（逗号、制表符或分号）")
     return None
 
 # =========================
@@ -146,8 +162,10 @@ df = read_file_smart(uploaded_file)
 if df is None:
     st.stop()
 
-st.success(f"✅ 文件读取成功，共 {len(df)} 行")
-st.write("列名：", df.columns.tolist())
+st.success(f"✅ 文件读取成功，共 {len(df)} 行，{len(df.columns)} 列")
+
+# 显示列名供用户确认
+st.write("📋 检测到的列名：", df.columns.tolist())
 
 keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
 
