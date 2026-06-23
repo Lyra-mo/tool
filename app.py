@@ -107,25 +107,46 @@ def is_english(text: str) -> bool:
     return english_letters / total_chars > 0.7
 
 # =========================
-# 主逻辑（始终显示）
+# 智能读取文件
+# =========================
+def read_file_smart(uploaded_file):
+    """自动检测编码并读取文件"""
+    if uploaded_file.name.endswith(('.xlsx', '.xls')):
+        return pd.read_excel(uploaded_file)
+    
+    # CSV 文件：尝试多种编码
+    encodings = ['utf-8', 'utf-16', 'utf-16-le', 'utf-16-be', 'latin1', 'cp1252']
+    
+    for encoding in encodings:
+        try:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, encoding=encoding)
+            return df
+        except UnicodeDecodeError:
+            continue
+        except Exception:
+            continue
+    
+    # 所有编码都失败
+    st.error("❌ 无法识别文件编码，请确保文件为 UTF-8 或 UTF-16 编码")
+    return None
+
+# =========================
+# 主逻辑
 # =========================
 st.markdown("---")
 st.subheader("📊 处理结果")
 
-# 即使没有上传文件，也显示提示
 if uploaded_file is None:
     st.info("📁 请先上传 CSV 或 Excel 文件，然后点击下方按钮开始处理")
-    st.stop()  # 停止执行，不显示下面的内容
+    st.stop()
 
-# ===== 以下代码只在文件上传后执行 =====
-st.success(f"✅ 文件读取成功，共 {len(pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file))} 行")
+# ===== 读取文件 =====
+df = read_file_smart(uploaded_file)
+if df is None:
+    st.stop()
 
-# 读取文件
-if uploaded_file.name.endswith(".csv"):
-    df = pd.read_csv(uploaded_file)
-else:
-    df = pd.read_excel(uploaded_file)
-
+st.success(f"✅ 文件读取成功，共 {len(df)} 行")
 st.write("列名：", df.columns.tolist())
 
 keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
@@ -137,36 +158,38 @@ if brands:
 start_btn = st.button("🚀 一键启动筛选", type="primary", use_container_width=True)
 
 if start_btn:
-    texts = df[keyword_column].tolist()
-    results = []
-    for text in texts:
-        results.append(is_english(str(text)) if target_language == "en" else True)
-    
-    df_filtered = df[results].copy()
-    
-    # 品牌过滤
-    if brands:
-        keep_mask = []
-        for val in df_filtered[keyword_column].tolist():
-            s = str(val).lower().strip()
-            keep = True
-            for brand in brands:
-                if s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}") or f" {brand} " in f" {s} ":
-                    keep = False
-                    break
-            keep_mask.append(keep)
-        df_filtered = df_filtered[keep_mask].copy()
-    
-    # 去重
-    df_filtered = df_filtered.drop_duplicates(subset=[keyword_column]).copy()
-    
-    st.success(f"✨ 筛选完成！剩余 {len(df_filtered)} 条关键词")
-    st.dataframe(df_filtered.head(100))
-    
-    csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        label="📥 下载结果 CSV",
-        data=csv_data,
-        file_name="filtered_keywords.csv",
-        mime="text/csv"
-    )
+    with st.spinner("正在筛选..."):
+        texts = df[keyword_column].tolist()
+        results = []
+        for text in texts:
+            results.append(is_english(str(text)) if target_language == "en" else True)
+        
+        df_filtered = df[results].copy()
+        
+        # 品牌过滤
+        if brands:
+            keep_mask = []
+            for val in df_filtered[keyword_column].tolist():
+                s = str(val).lower().strip()
+                keep = True
+                for brand in brands:
+                    if s == brand or s.startswith(f"{brand} ") or s.endswith(f" {brand}") or f" {brand} " in f" {s} ":
+                        keep = False
+                        break
+                keep_mask.append(keep)
+            df_filtered = df_filtered[keep_mask].copy()
+        
+        # 去重
+        df_filtered = df_filtered.drop_duplicates(subset=[keyword_column]).copy()
+        
+        st.success(f"✨ 筛选完成！剩余 {len(df_filtered)} 条关键词")
+        st.dataframe(df_filtered.head(100))
+        
+        csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label="📥 下载结果 CSV",
+            data=csv_data,
+            file_name="filtered_keywords.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
