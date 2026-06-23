@@ -99,7 +99,7 @@ def batch_language_detection(texts, target_lang, progress_bar, status_text):
 
 def batch_brand_filter(texts, brands, progress_bar, status_text):
     if not brands:
-        return [True] * len(texts)
+        return [True] * len(texts), []
     results = []
     total = len(texts)
     removed_examples = []
@@ -122,22 +122,74 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
     return results, removed_examples
 
 # =========================
+# 智能读取 CSV（自动识别分隔符和编码）
+# =========================
+def read_csv_smart(uploaded_file):
+    """智能读取 CSV，自动尝试多种分隔符和编码"""
+    # 先尝试用 Python 引擎自动检测分隔符
+    uploaded_file.seek(0)
+    try:
+        # 读取前几行让 pandas 自动检测
+        df = pd.read_csv(uploaded_file, encoding="utf-8", engine="python", sep=None)
+        if len(df.columns) > 1:
+            return df
+    except:
+        pass
+    
+    # 尝试多种编码和分隔符组合
+    encodings = ["utf-8", "latin1", "gbk", "gb2312", "cp936", "utf-16"]
+    separators = [",", ";", "\t", "|", " "]
+    
+    for encoding in encodings:
+        for sep in separators:
+            try:
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep)
+                # 检查是否成功读取了多列
+                if len(df.columns) > 1:
+                    return df
+            except:
+                continue
+    
+    # 最后兜底：用 python 引擎 + 自动检测，忽略错误行
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(
+            uploaded_file, 
+            encoding="utf-8", 
+            engine="python", 
+            sep=None,
+            on_bad_lines="skip"  # 跳过有问题行
+        )
+        if len(df.columns) > 1:
+            return df
+    except:
+        pass
+    
+    # 实在读不出来，返回空
+    return None
+
+# =========================
 # 主逻辑
 # =========================
 if uploaded_file is not None:
     # 读取文件
     with st.spinner("读取文件中..."):
         if uploaded_file.name.endswith(".csv"):
-            try:
-                df = pd.read_csv(uploaded_file)
-            except:
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, encoding="latin1")
+            df = read_csv_smart(uploaded_file)
+            if df is None:
+                st.error("❌ 无法读取 CSV 文件，请检查文件格式是否正确")
+                st.stop()
         else:
-            df = pd.read_excel(uploaded_file)
+            try:
+                df = pd.read_excel(uploaded_file)
+            except Exception as e:
+                st.error(f"❌ 读取 Excel 文件失败：{e}")
+                st.stop()
+        
         df.columns = df.columns.astype(str).str.strip().str.replace("\ufeff", "", regex=False)
 
-    st.success(f"✅ 文件读取成功，共 {len(df)} 行")
+    st.success(f"✅ 文件读取成功，共 {len(df)} 行，{len(df.columns)} 列")
     st.write("实际列名：", df.columns.tolist())
 
     keyword_column = st.selectbox("📌 请选择关键词所在的列", df.columns.tolist())
