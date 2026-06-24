@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 import re
+import time
 
 from lingua import Language, LanguageDetectorBuilder
+from deep_translator import GoogleTranslator
 
 # =========================
 # 页面配置
@@ -11,7 +13,7 @@ st.set_page_config(page_title="关键词筛选工具", layout="wide")
 st.title("🔧 关键词筛选工具")
 
 # =========================
-# 语言映射
+# 语言映射（新增5种语言）
 # =========================
 language_options = {
     "en": "英语",
@@ -24,7 +26,32 @@ language_options = {
     "ko": "韩语",
     "zh": "中文",
     "ru": "俄语",
-    "ar": "阿拉伯语"
+    "ar": "阿拉伯语",
+    "th": "泰语",
+    "id": "印尼语",
+    "tr": "土耳其语",
+    "pl": "波兰语",
+    "vi": "越南语"
+}
+
+# 反向映射（用于翻译）
+lang_code_to_name = {
+    "en": "english",
+    "pt": "portuguese",
+    "es": "spanish",
+    "de": "german",
+    "fr": "french",
+    "it": "italian",
+    "ja": "japanese",
+    "ko": "korean",
+    "zh": "chinese",
+    "ru": "russian",
+    "ar": "arabic",
+    "th": "thai",
+    "id": "indonesian",
+    "tr": "turkish",
+    "pl": "polish",
+    "vi": "vietnamese"
 }
 
 lingua_map = {
@@ -38,13 +65,86 @@ lingua_map = {
     "ko": Language.KOREAN,
     "zh": Language.CHINESE,
     "ru": Language.RUSSIAN,
-    "ar": Language.ARABIC
+    "ar": Language.ARABIC,
+    "th": Language.THAI,
+    "id": Language.INDONESIAN,
+    "tr": Language.TURKISH,
+    "pl": Language.POLISH,
+    "vi": Language.VIETNAMESE
 }
 
 # 构建检测器（只检测支持的语言，速度更快）
 detector = LanguageDetectorBuilder.from_languages(
     *lingua_map.values()
 ).build()
+
+# =========================
+# 翻译缓存（避免重复翻译）
+# =========================
+translation_cache = {}
+
+def translate_to_english(text, source_lang=None):
+    """
+    将文本翻译成英语，带缓存机制
+    """
+    if pd.isna(text) or not str(text).strip():
+        return ""
+    
+    text = str(text).strip()
+    
+    # 如果文本已经是英文，直接返回
+    try:
+        detected = detector.detect_language_of(text)
+        if detected == Language.ENGLISH:
+            return text
+    except:
+        pass
+    
+    # 检查缓存
+    cache_key = text
+    if cache_key in translation_cache:
+        return translation_cache[cache_key]
+    
+    try:
+        # 使用 Google 翻译
+        translator = GoogleTranslator(source='auto', target='en')
+        translated = translator.translate(text)
+        
+        # 存入缓存
+        translation_cache[cache_key] = translated
+        return translated
+    except Exception as e:
+        # 翻译失败时返回空字符串
+        return ""
+
+def batch_translate(
+    texts,
+    progress_bar,
+    status_text,
+    delay=0.1  # 避免请求过快
+):
+    """
+    批量翻译，带进度显示
+    """
+    results = []
+    total = len(texts)
+    
+    for i, text in enumerate(texts):
+        translated = translate_to_english(text)
+        results.append(translated)
+        
+        # 添加小延迟避免被限制
+        if i % 10 == 0:
+            time.sleep(delay)
+        
+        if (i + 1) % 50 == 0 or i + 1 == total:
+            pct = (i + 1) / total
+            progress_bar.progress(pct)
+            status_text.text(
+                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%)"
+            )
+    
+    return results
 
 # =========================
 # 语言选择
@@ -90,6 +190,27 @@ else:
             "⚡ 跳过语言检测",
             value=False,
             help="如果文件已经全部是目标语言，可以跳过检测"
+        )
+
+# =========================
+# 翻译选项
+# =========================
+st.markdown("### 🌐 翻译设置")
+
+col_trans1, col_trans2 = st.columns([1, 2])
+
+with col_trans1:
+    enable_translation = st.checkbox(
+        "📝 添加英语翻译列",
+        value=False,
+        help="为筛选后的关键词添加英语释义"
+    )
+
+with col_trans2:
+    if enable_translation:
+        st.info(
+            "💡 翻译使用 Google Translate API，需要联网。"
+            "翻译速度取决于网络状况，大量数据可能需要较长时间。"
         )
 
 # =========================
@@ -403,6 +524,28 @@ if start_btn:
         df_filtered = df_filtered.drop_duplicates(
             subset=[keyword_column]
         )
+
+        # ===== 翻译功能 =====
+        if enable_translation and len(df_filtered) > 0:
+            status_text.text("🌐 准备翻译...")
+            
+            # 获取关键词列表
+            keywords = df_filtered[keyword_column].tolist()
+            
+            # 批量翻译
+            translations = batch_translate(
+                keywords,
+                progress_bar,
+                status_text,
+                delay=0.1
+            )
+            
+            # 添加翻译列
+            df_filtered['english_translation'] = translations
+            
+            # 统计翻译成功数量
+            translated_count = sum(1 for t in translations if t and t.strip())
+            st.info(f"✅ 成功翻译 {translated_count}/{len(keywords)} 条")
 
         progress_bar.progress(1.0)
 
