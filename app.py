@@ -53,17 +53,44 @@ col1, col2 = st.columns(2)
 
 with col1:
     target_language = st.selectbox(
-        "🎯 保留哪种语言",
+        "🎯 保留哪种主要语言",
         list(language_options.keys()),
         format_func=lambda x: f"{x} - {language_options[x]}"
     )
 
 with col2:
-    skip_lang_detect = st.checkbox(
-        "⚡ 跳过语言检测",
+    enable_second_lang = st.checkbox(
+        "➕ 启用第二种语言筛选",
         value=False,
-        help="如果文件已经全部是目标语言，可以跳过检测"
+        help="同时保留两种语言的关键词"
     )
+
+# 第二语言选择（仅在启用时显示）
+if enable_second_lang:
+    col3, col4 = st.columns(2)
+    with col3:
+        second_language = st.selectbox(
+            "🎯 保留第二种语言",
+            list(language_options.keys()),
+            format_func=lambda x: f"{x} - {language_options[x]}",
+            key="second_lang_select"
+        )
+        # 如果第二语言和第一语言相同，给出提示
+        if second_language == target_language:
+            st.warning("⚠️ 第二种语言与主要语言相同，请选择不同的语言")
+    with col4:
+        skip_lang_detect = st.checkbox(
+            "⚡ 跳过语言检测",
+            value=False,
+            help="如果文件已经全部是目标语言，可以跳过检测"
+        )
+else:
+    with col2:
+        skip_lang_detect = st.checkbox(
+            "⚡ 跳过语言检测",
+            value=False,
+            help="如果文件已经全部是目标语言，可以跳过检测"
+        )
 
 # =========================
 # 品牌词
@@ -111,7 +138,7 @@ uploaded_file = st.file_uploader(
 # =========================
 # 语言检测
 # =========================
-def is_target_language(text, target_lang):
+def is_target_language(text, target_lang, second_lang=None, enable_second=False):
 
     if pd.isna(text):
         return True
@@ -127,7 +154,15 @@ def is_target_language(text, target_lang):
         if detected is None:
             return False
 
-        return detected == lingua_map[target_lang]
+        # 检查是否匹配主要语言
+        is_main = detected == lingua_map[target_lang]
+        
+        # 如果启用第二语言，检查是否匹配第二语言
+        if enable_second and second_lang:
+            is_second = detected == lingua_map[second_lang]
+            return is_main or is_second
+        
+        return is_main
 
     except Exception:
         return False
@@ -136,7 +171,9 @@ def batch_language_detection(
     texts,
     target_lang,
     progress_bar,
-    status_text
+    status_text,
+    second_lang=None,
+    enable_second=False
 ):
     results = []
 
@@ -145,7 +182,7 @@ def batch_language_detection(
     for i, text in enumerate(texts):
 
         results.append(
-            is_target_language(text, target_lang)
+            is_target_language(text, target_lang, second_lang, enable_second)
         )
 
         if (i + 1) % 200 == 0 or i + 1 == total:
@@ -153,8 +190,9 @@ def batch_language_detection(
 
             progress_bar.progress(pct)
 
+            lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
             status_text.text(
-                f"🔍 语言检测中... {i+1}/{total} ({int(pct*100)}%)"
+                f"🔍 语言检测中... {i+1}/{total} ({int(pct*100)}%) [目标: {language_options[target_lang]}{lang_info}]"
             )
 
     return results
@@ -320,6 +358,11 @@ start_btn = st.button(
 
 if start_btn:
 
+    # 检查第二语言是否与第一语言相同
+    if enable_second_lang and second_language == target_language:
+        st.error("❌ 第二种语言不能与主要语言相同，请重新选择")
+        st.stop()
+
     with st.spinner("处理中..."):
 
         progress_bar = st.progress(0)
@@ -337,7 +380,9 @@ if start_btn:
                 texts,
                 target_language,
                 progress_bar,
-                status_text
+                status_text,
+                second_language if enable_second_lang else None,
+                enable_second_lang
             )
 
         df_filtered = df[keep_mask].copy()
@@ -361,11 +406,38 @@ if start_btn:
 
         progress_bar.progress(1.0)
 
-        status_text.text("✅ 筛选完成")
+        # 显示筛选统计信息
+        lang_info = f" + {language_options[second_language]}" if enable_second_lang and second_language else ""
+        status_text.text(
+            f"✅ 筛选完成 - 保留语言: {language_options[target_language]}{lang_info}"
+        )
 
         st.success(
             f"✨ 剩余 {len(df_filtered)} 条关键词"
         )
+
+        # 显示语言分布（如果启用第二语言）
+        if enable_second_lang and not skip_lang_detect and len(df_filtered) > 0:
+            with st.expander("📊 查看语言分布"):
+                sample_texts = df_filtered[keyword_column].head(1000).tolist()
+                lang_counts = {}
+                for text in sample_texts:
+                    if pd.isna(text):
+                        continue
+                    try:
+                        detected = detector.detect_language_of(str(text).strip())
+                        if detected:
+                            lang_name = detected.name.lower()
+                            lang_counts[lang_name] = lang_counts.get(lang_name, 0) + 1
+                    except:
+                        pass
+                
+                if lang_counts:
+                    lang_df = pd.DataFrame(
+                        list(lang_counts.items()),
+                        columns=["语言", "数量"]
+                    ).sort_values("数量", ascending=False)
+                    st.dataframe(lang_df)
 
         st.dataframe(df_filtered.head(100))
 
