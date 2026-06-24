@@ -525,7 +525,7 @@ if start_btn:
             subset=[keyword_column]
         )
 
-        # ===== 翻译功能 =====
+        # ===== 翻译功能（修改部分） =====
         if enable_translation and len(df_filtered) > 0:
             status_text.text("🌐 准备翻译...")
             
@@ -540,8 +540,15 @@ if start_btn:
                 delay=0.1
             )
             
-            # 添加翻译列
-            df_filtered['english_translation'] = translations
+            # 获取关键词列的索引位置
+            col_index = df_filtered.columns.get_loc(keyword_column)
+            
+            # 在关键词列后面插入翻译列
+            df_filtered.insert(
+                col_index + 1,  # 在关键词列后面插入
+                'english_translation',
+                translations
+            )
             
             # 统计翻译成功数量
             translated_count = sum(1 for t in translations if t and t.strip())
