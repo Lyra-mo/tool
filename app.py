@@ -3,16 +3,16 @@ import pandas as pd
 import re
 import time
 import hashlib
+from collections import Counter
 
 from lingua import Language, LanguageDetectorBuilder
 
-# 尝试导入翻译库，如果失败则使用备选方案
+# 尝试导入翻译库
 try:
     from deep_translator import GoogleTranslator
     TRANSLATOR_AVAILABLE = True
 except ImportError:
     TRANSLATOR_AVAILABLE = False
-    st.warning("⚠️ deep_translator 未安装，翻译功能将不可用")
 
 # =========================
 # 页面配置
@@ -21,7 +21,7 @@ st.set_page_config(page_title="关键词筛选工具", layout="wide")
 st.title("🔧 关键词筛选工具")
 
 # =========================
-# 语言映射（新增5种语言）
+# 语言映射
 # =========================
 language_options = {
     "en": "英语",
@@ -40,26 +40,6 @@ language_options = {
     "tr": "土耳其语",
     "pl": "波兰语",
     "vi": "越南语"
-}
-
-# 反向映射（用于翻译）
-lang_code_to_name = {
-    "en": "english",
-    "pt": "portuguese",
-    "es": "spanish",
-    "de": "german",
-    "fr": "french",
-    "it": "italian",
-    "ja": "japanese",
-    "ko": "korean",
-    "zh": "chinese",
-    "ru": "russian",
-    "ar": "arabic",
-    "th": "thai",
-    "id": "indonesian",
-    "tr": "turkish",
-    "pl": "polish",
-    "vi": "vietnamese"
 }
 
 lingua_map = {
@@ -81,24 +61,72 @@ lingua_map = {
     "vi": Language.VIETNAMESE
 }
 
-# 构建检测器（只检测支持的语言，速度更快）
-detector = LanguageDetectorBuilder.from_languages(
-    *lingua_map.values()
-).build()
+# =========================
+# 西语常见词库（用于辅助判断）
+# =========================
+SPANISH_COMMON_WORDS = {
+    'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+    'y', 'o', 'pero', 'por', 'para', 'con', 'sin', 'sobre',
+    'de', 'del', 'al', 'a', 'en', 'entre', 'hasta', 'desde',
+    'que', 'quien', 'cual', 'cuando', 'donde', 'como', 'porque',
+    'es', 'son', 'está', 'están', 'era', 'eran', 'fue', 'fueron',
+    'tiene', 'tienen', 'tenía', 'tenían', 'tuvo', 'tuvieron',
+    'puede', 'pueden', 'podía', 'podían', 'pudo', 'pudieron',
+    'hace', 'hacen', 'hacía', 'hacían', 'hizo', 'hicieron',
+    'dice', 'dicen', 'decía', 'decían', 'dijo', 'dijeron',
+    'se', 'me', 'te', 'nos', 'os', 'lo', 'le', 'les', 'la', 'las',
+    'mi', 'tu', 'su', 'nuestro', 'vuestro', 'sus',
+    'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
+    'aquel', 'aquella', 'aquellos', 'aquellas',
+    'muy', 'mucho', 'poco', 'más', 'menos', 'tan', 'tanto',
+    'bien', 'mal', 'si', 'no', 'también', 'tampoco',
+    'ser', 'estar', 'tener', 'hacer', 'decir', 'ir', 'ver',
+    'poder', 'saber', 'querer', 'llegar', 'llevar', 'dejar',
+    'mirar', 'escuchar', 'hablar', 'comer', 'beber', 'vivir',
+    'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
+    'tv', 'television', 'video', 'audio', 'musica', 'cine',
+    'precio', 'producto', 'servicio', 'empresa', 'tienda'
+}
+
+# 西语常见后缀/词根
+SPANISH_SUFFIXES = {
+    'ción', 'sión', 'xión',  # 名词后缀
+    'mente',  # 副词后缀
+    'dad', 'tad',  # 名词后缀
+    'aje',  # 名词后缀
+    'anza', 'encia', 'ancia',  # 名词后缀
+    'ero', 'era',  # 职业/工具后缀
+    'ista',  # 职业后缀
+    'or', 'ora',  # 施动者后缀
+    'al', 'ar',  # 形容词后缀
+    'ble',  # 形容词后缀
+    'ivo', 'iva',  # 形容词后缀
+    'oso', 'osa',  # 形容词后缀
+}
+
+# 西语常见字母组合
+SPANISH_CHAR_PATTERNS = {
+    'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü',
+    'll', 'rr', 'ch', 'qu'
+}
 
 # =========================
-# 翻译缓存（避免重复翻译）
+# 构建检测器
+# =========================
+detector = LanguageDetectorBuilder.from_languages(
+    *lingua_map.values()
+).with_minimum_relative_distance(0.15).build()  # 设置最小相对距离，提高准确率
+
+# =========================
+# 翻译缓存
 # =========================
 translation_cache = {}
 
 def get_cache_key(text):
-    """生成缓存键"""
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-def translate_to_english(text, source_lang=None):
-    """
-    将文本翻译成英语，带缓存机制和更好的错误处理
-    """
+def translate_to_english(text):
+    """翻译文本到英语"""
     if not TRANSLATOR_AVAILABLE:
         return ""
     
@@ -107,7 +135,7 @@ def translate_to_english(text, source_lang=None):
     
     text = str(text).strip()
     
-    # 如果文本已经是英文，直接返回
+    # 检查是否是英语
     try:
         detected = detector.detect_language_of(text)
         if detected == Language.ENGLISH:
@@ -120,10 +148,6 @@ def translate_to_english(text, source_lang=None):
     if cache_key in translation_cache:
         return translation_cache[cache_key]
     
-    # 尝试多种翻译方法
-    translations_attempted = []
-    
-    # 方法1: 使用 Google Translator
     try:
         translator = GoogleTranslator(source='auto', target='en')
         translated = translator.translate(text)
@@ -131,23 +155,14 @@ def translate_to_english(text, source_lang=None):
             translation_cache[cache_key] = translated
             return translated
     except Exception as e:
-        translations_attempted.append(f"Google: {str(e)[:50]}")
+        pass
     
-    # 如果所有方法都失败，返回空字符串
     translation_cache[cache_key] = ""
     return ""
 
-def batch_translate(
-    texts,
-    progress_bar,
-    status_text,
-    delay=0.2  # 增加延迟避免被限制
-):
-    """
-    批量翻译，带进度显示和错误恢复
-    """
+def batch_translate(texts, progress_bar, status_text, delay=0.2):
+    """批量翻译"""
     if not TRANSLATOR_AVAILABLE:
-        status_text.text("⚠️ 翻译模块不可用，跳过翻译")
         return [""] * len(texts)
     
     results = []
@@ -160,11 +175,10 @@ def batch_translate(
             results.append(translated)
             if not translated or len(translated.strip()) == 0:
                 failed_count += 1
-        except Exception as e:
+        except:
             results.append("")
             failed_count += 1
         
-        # 添加小延迟避免被限制
         if i % 5 == 0:
             time.sleep(delay)
         
@@ -172,113 +186,149 @@ def batch_translate(
             pct = (i + 1) / total
             progress_bar.progress(pct)
             status_text.text(
-                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%) [失败: {failed_count}]"
+                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%)"
             )
     
     return results
 
 # =========================
-# 语言选择
+# 语言检测（增强版）
 # =========================
-col1, col2 = st.columns(2)
+def is_spanish_like(text):
+    """检测文本是否像西班牙语（基于字符特征）"""
+    if pd.isna(text) or not str(text).strip():
+        return False
+    
+    text_lower = str(text).lower().strip()
+    words = re.findall(r'\b\w+\b', text_lower)
+    
+    if not words:
+        return False
+    
+    # 1. 检查西语特殊字符
+    spanish_char_count = sum(1 for ch in text_lower if ch in SPANISH_CHAR_PATTERNS)
+    has_spanish_chars = spanish_char_count > 0
+    
+    # 2. 检查西语后缀
+    suffix_count = sum(1 for word in words if any(word.endswith(suffix) for suffix in SPANISH_SUFFIXES))
+    suffix_ratio = suffix_count / len(words) if words else 0
+    
+    # 3. 检查西语常见词
+    common_word_count = sum(1 for word in words if word in SPANISH_COMMON_WORDS)
+    common_ratio = common_word_count / len(words) if words else 0
+    
+    # 4. 检查是否包含英语常见词（用于排除英语）
+    english_common = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out'}
+    english_count = sum(1 for word in words if word in english_common)
+    
+    # 综合判断
+    score = 0
+    if has_spanish_chars:
+        score += 0.3
+    if suffix_ratio > 0.1:
+        score += min(suffix_ratio, 0.3)
+    if common_ratio > 0.1:
+        score += min(common_ratio, 0.4)
+    
+    # 如果英语词太多，降低分数
+    if english_count > 0:
+        english_ratio = english_count / len(words)
+        score = score * (1 - min(english_ratio * 2, 0.5))
+    
+    return score > 0.25
 
-with col1:
-    target_language = st.selectbox(
-        "🎯 保留哪种主要语言",
-        list(language_options.keys()),
-        format_func=lambda x: f"{x} - {language_options[x]}"
-    )
+def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False, confidence_threshold=0.5):
+    """
+    增强的语言检测函数
+    """
+    if pd.isna(text):
+        return True
 
-with col2:
-    enable_second_lang = st.checkbox(
-        "➕ 启用第二种语言筛选",
-        value=False,
-        help="同时保留两种语言的关键词"
-    )
+    s = str(text).strip()
 
-# 第二语言选择（仅在启用时显示）
-if enable_second_lang:
-    col3, col4 = st.columns(2)
-    with col3:
-        second_language = st.selectbox(
-            "🎯 保留第二种语言",
-            list(language_options.keys()),
-            format_func=lambda x: f"{x} - {language_options[x]}",
-            key="second_lang_select"
-        )
-        # 如果第二语言和第一语言相同，给出提示
-        if second_language == target_language:
-            st.warning("⚠️ 第二种语言与主要语言相同，请选择不同的语言")
-    with col4:
-        skip_lang_detect = st.checkbox(
-            "⚡ 跳过语言检测",
-            value=False,
-            help="如果文件已经全部是目标语言，可以跳过检测"
-        )
+    # 太短的文本处理
+    if len(s) < 3:
+        return False if strict else True
+    
+    # 对西班牙语的特别处理
+    if target_lang == "es" or (enable_second and second_lang == "es"):
+        # 使用辅助检测
+        is_spanish = is_spanish_like(s)
         
-        # 增加严格模式选项
-        strict_mode = st.checkbox(
-            "🎯 严格模式",
-            value=False,
-            help="更严格的语言检测，减少误判"
-        )
-else:
-    with col2:
-        skip_lang_detect = st.checkbox(
-            "⚡ 跳过语言检测",
-            value=False,
-            help="如果文件已经全部是目标语言，可以跳过检测"
-        )
+        # 如果短文本且看起来像西语，直接返回True
+        if len(s) < 10 and is_spanish:
+            return True
+    
+    try:
+        # 使用 lingua 检测，获取检测结果和置信度
+        detected = detector.detect_language_of(s)
         
-        # 增加严格模式选项
-        strict_mode = st.checkbox(
-            "🎯 严格模式",
-            value=False,
-            help="更严格的语言检测，减少误判"
-        )
-
-# =========================
-# 翻译选项
-# =========================
-st.markdown("### 🌐 翻译设置")
-
-col_trans1, col_trans2 = st.columns([1, 2])
-
-with col_trans1:
-    enable_translation = st.checkbox(
-        "📝 添加英语翻译列",
-        value=False,
-        help="为筛选后的关键词添加英语释义"
-    )
-
-with col_trans2:
-    if enable_translation:
-        if TRANSLATOR_AVAILABLE:
-            st.info(
-                "💡 翻译使用 Google Translate API，需要联网。"
-                "翻译速度取决于网络状况，大量数据可能需要较长时间。"
-                "\n\n⚠️ 如果翻译失败，对应单元格将为空。"
-            )
+        if detected is None:
+            return False
+        
+        # 检查是否匹配主要语言
+        is_main = detected == lingua_map[target_lang]
+        
+        # 如果启用第二语言
+        if enable_second and second_lang:
+            is_second = detected == lingua_map[second_lang]
+            is_match = is_main or is_second
         else:
-            st.error("❌ deep_translator 未安装，翻译功能不可用")
+            is_match = is_main
+        
+        # 如果不匹配，进一步检查是否可能是目标语言但被误判
+        if not is_match and target_lang == "es":
+            # 如果lingua没检测为西语，但我们的辅助检测认为是西语
+            if is_spanish_like(s):
+                return True
+        
+        return is_match
+
+    except Exception as e:
+        return False if strict else True
+
+def batch_language_detection(
+    texts,
+    target_lang,
+    progress_bar,
+    status_text,
+    second_lang=None,
+    enable_second=False,
+    strict=False
+):
+    results = []
+    total = len(texts)
+    rejected_count = 0
+    kept_count = 0
+
+    for i, text in enumerate(texts):
+        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
+        results.append(is_match)
+        
+        if is_match:
+            kept_count += 1
+        else:
+            rejected_count += 1
+
+        if (i + 1) % 200 == 0 or i + 1 == total:
+            pct = (i + 1) / total
+            progress_bar.progress(pct)
+
+            lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
+            status_text.text(
+                f"🔍 检测中... {i+1}/{total} ({int(pct*100)}%) | 保留: {kept_count} | 排除: {rejected_count} | 目标: {language_options[target_lang]}{lang_info}"
+            )
+
+    return results
 
 # =========================
-# 品牌词
+# 其他函数（品牌过滤、读取文件等保持不变）
 # =========================
-st.markdown("### 🚫 要删除的品牌词")
-
-brand_text = st.text_area(
-    "支持空格、逗号、换行分隔",
-    height=100,
-    placeholder="wirecast flexi play mirror iphone"
-)
-
 def parse_brands(raw_text):
     if not raw_text:
         return []
 
     lines = raw_text.splitlines()
-
     brands = []
 
     for line in lines:
@@ -297,218 +347,125 @@ def parse_brands(raw_text):
 
     return unique
 
-# =========================
-# 文件上传
-# =========================
-uploaded_file = st.file_uploader(
-    "📂 上传 CSV 或 Excel 文件",
-    type=["csv", "xlsx", "xls"]
-)
-
-# =========================
-# 语言检测（改进版）
-# =========================
-def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
-    """
-    改进的语言检测函数，支持严格模式
-    """
-    if pd.isna(text):
-        return True
-
-    s = str(text).strip()
-
-    # 太短的文本难以准确检测，在严格模式下直接返回False
-    if len(s) < 3:
-        return False if strict else True
-    
-    # 如果文本包含多种字符类型，可能不是单一语言
-    # 在严格模式下，要求更长的文本才能准确检测
-    if strict and len(s) < 10:
-        # 对于短文本，检查是否包含目标语言的常见字符
-        # 这里简单处理：如果文本包含非ASCII字符，可能是非英语
-        if target_lang == "en" and not s.isascii():
-            return False
-        elif target_lang != "en" and s.isascii():
-            return False
-
-    try:
-        # 使用 lingua 检测
-        detected = detector.detect_language_of(s)
-        
-        if detected is None:
-            return False
-        
-        # 在严格模式下，检查置信度（如果lingua支持）
-        # 这里我们简单处理：检测到的语言必须在多种检测中一致
-        if strict:
-            # 对短文本，二次确认
-            if len(s) < 20:
-                # 使用不同的检测方法或再次检测
-                detected2 = detector.detect_language_of(s[:len(s)//2] if len(s) > 1 else s)
-                if detected2 and detected != detected2:
-                    return False
-
-        # 检查是否匹配主要语言
-        is_main = detected == lingua_map[target_lang]
-        
-        # 如果启用第二语言，检查是否匹配第二语言
-        if enable_second and second_lang:
-            is_second = detected == lingua_map[second_lang]
-            return is_main or is_second
-        
-        return is_main
-
-    except Exception as e:
-        # 检测失败，在严格模式下返回False，否则返回True
-        return False if strict else True
-
-def batch_language_detection(
-    texts,
-    target_lang,
-    progress_bar,
-    status_text,
-    second_lang=None,
-    enable_second=False,
-    strict=False
-):
-    results = []
-    total = len(texts)
-    rejected_count = 0
-
-    for i, text in enumerate(texts):
-        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
-        results.append(is_match)
-        
-        if not is_match:
-            rejected_count += 1
-
-        if (i + 1) % 200 == 0 or i + 1 == total:
-            pct = (i + 1) / total
-            progress_bar.progress(pct)
-
-            lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
-            status_text.text(
-                f"🔍 语言检测中... {i+1}/{total} ({int(pct*100)}%) [目标: {language_options[target_lang]}{lang_info}] [已排除: {rejected_count}]"
-            )
-
-    return results
-
-# =========================
-# 品牌过滤
-# =========================
-def batch_brand_filter(
-    texts,
-    brands,
-    progress_bar,
-    status_text
-):
-
+def batch_brand_filter(texts, brands, progress_bar, status_text):
     if not brands:
         return [True] * len(texts), []
 
     results = []
-
     removed_examples = []
-
     total = len(texts)
 
     for i, val in enumerate(texts):
-
         if pd.isna(val):
             results.append(True)
-
         else:
             s = str(val).lower().strip()
-
             keep = True
 
             for brand in brands:
-
-                if (
-                    s == brand
-                    or s.startswith(f"{brand} ")
-                    or s.endswith(f" {brand}")
-                    or f" {brand} " in f" {s} "
-                ):
+                if (s == brand or 
+                    s.startswith(f"{brand} ") or 
+                    s.endswith(f" {brand}") or 
+                    f" {brand} " in f" {s} "):
                     keep = False
-
                     if len(removed_examples) < 10:
-                        removed_examples.append(
-                            f"「{val}」包含品牌词「{brand}」"
-                        )
-
+                        removed_examples.append(f"「{val}」包含品牌词「{brand}」")
                     break
 
             results.append(keep)
 
         if (i + 1) % 500 == 0 or i + 1 == total:
-
             pct = (i + 1) / total
-
             progress_bar.progress(pct)
-
-            status_text.text(
-                f"🚫 品牌过滤中... {i+1}/{total} ({int(pct*100)}%)"
-            )
+            status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int(pct*100)}%)")
 
     return results, removed_examples
 
-# =========================
-# 智能读取文件
-# =========================
 def read_file_smart(uploaded_file):
-
     if uploaded_file.name.endswith((".xlsx", ".xls")):
         return pd.read_excel(uploaded_file)
 
-    encodings = [
-        "utf-8",
-        "utf-8-sig",
-        "utf-16",
-        "latin1",
-        "cp1252"
-    ]
-
-    separators = [
-        ",",
-        "\t",
-        ";",
-        "|"
-    ]
+    encodings = ["utf-8", "utf-8-sig", "utf-16", "latin1", "cp1252"]
+    separators = [",", "\t", ";", "|"]
 
     for encoding in encodings:
         for sep in separators:
-
             try:
                 uploaded_file.seek(0)
-
-                df = pd.read_csv(
-                    uploaded_file,
-                    encoding=encoding,
-                    sep=sep,
-                    engine="python"
-                )
-
+                df = pd.read_csv(uploaded_file, encoding=encoding, sep=sep, engine="python")
                 if len(df.columns) > 1:
                     return df
-
             except Exception:
                 pass
 
     try:
         uploaded_file.seek(0)
-
-        return pd.read_csv(
-            uploaded_file,
-            sep=None,
-            engine="python"
-        )
-
+        return pd.read_csv(uploaded_file, sep=None, engine="python")
     except Exception:
-
         st.error("❌ 文件解析失败")
-
         return None
+
+# =========================
+# Streamlit UI
+# =========================
+
+# 语言选择
+col1, col2 = st.columns(2)
+
+with col1:
+    target_language = st.selectbox(
+        "🎯 保留哪种主要语言",
+        list(language_options.keys()),
+        format_func=lambda x: f"{x} - {language_options[x]}"
+    )
+
+with col2:
+    enable_second_lang = st.checkbox(
+        "➕ 启用第二种语言筛选",
+        value=False
+    )
+
+if enable_second_lang:
+    col3, col4 = st.columns(2)
+    with col3:
+        second_language = st.selectbox(
+            "🎯 保留第二种语言",
+            list(language_options.keys()),
+            format_func=lambda x: f"{x} - {language_options[x]}",
+            key="second_lang_select"
+        )
+        if second_language == target_language:
+            st.warning("⚠️ 两种语言不能相同")
+    with col4:
+        skip_lang_detect = st.checkbox("⚡ 跳过语言检测", value=False)
+        strict_mode = st.checkbox("🎯 严格模式", value=True, help="更准确但可能漏掉一些混合语言文本")
+else:
+    with col2:
+        skip_lang_detect = st.checkbox("⚡ 跳过语言检测", value=False)
+        strict_mode = st.checkbox("🎯 严格模式", value=True, help="更准确但可能漏掉一些混合语言文本")
+
+# 翻译选项
+st.markdown("### 🌐 翻译设置")
+col_trans1, col_trans2 = st.columns([1, 2])
+with col_trans1:
+    enable_translation = st.checkbox("📝 添加英语翻译列", value=False)
+with col_trans2:
+    if enable_translation:
+        st.info("💡 翻译使用 Google Translate API，需要联网")
+
+# 品牌词
+st.markdown("### 🚫 要删除的品牌词")
+brand_text = st.text_area(
+    "支持空格、逗号、换行分隔",
+    height=100,
+    placeholder="wirecast flexi play mirror iphone"
+)
+
+# 文件上传
+uploaded_file = st.file_uploader(
+    "📂 上传 CSV 或 Excel 文件",
+    type=["csv", "xlsx", "xls"]
+)
 
 # =========================
 # 主流程
@@ -525,44 +482,24 @@ df = read_file_smart(uploaded_file)
 if df is None:
     st.stop()
 
-st.success(
-    f"✅ 文件读取成功，共 {len(df)} 行，{len(df.columns)} 列"
-)
+st.success(f"✅ 文件读取成功，共 {len(df)} 行，{len(df.columns)} 列")
+st.write("📋 检测到的列名：", df.columns.tolist())
 
-st.write(
-    "📋 检测到的列名：",
-    df.columns.tolist()
-)
-
-keyword_column = st.selectbox(
-    "📌 请选择关键词所在列",
-    df.columns.tolist()
-)
+keyword_column = st.selectbox("📌 请选择关键词所在列", df.columns.tolist())
 
 brands = parse_brands(brand_text)
-
 if brands:
-    st.success(
-        f"🔍 品牌词：{', '.join(brands)}"
-    )
+    st.success(f"🔍 品牌词：{', '.join(brands)}")
 
-start_btn = st.button(
-    "🚀 一键启动筛选",
-    type="primary",
-    use_container_width=True
-)
+start_btn = st.button("🚀 一键启动筛选", type="primary", use_container_width=True)
 
 if start_btn:
-
-    # 检查第二语言是否与第一语言相同
     if enable_second_lang and second_language == target_language:
-        st.error("❌ 第二种语言不能与主要语言相同，请重新选择")
+        st.error("❌ 两种语言不能相同")
         st.stop()
 
     with st.spinner("处理中..."):
-
         progress_bar = st.progress(0)
-
         status_text = st.empty()
 
         texts = df[keyword_column].tolist()
@@ -583,10 +520,10 @@ if start_btn:
 
         df_filtered = df[keep_mask].copy()
 
-        # 显示过滤后的语言分布
+        # 显示语言分布
         if not skip_lang_detect and len(df_filtered) > 0:
             with st.expander("📊 筛选后的语言分布"):
-                sample_texts = df_filtered[keyword_column].head(500).tolist()
+                sample_texts = df_filtered[keyword_column].head(1000).tolist()
                 lang_counts = {}
                 for text in sample_texts:
                     if pd.isna(text):
@@ -623,60 +560,31 @@ if start_btn:
 
         # 去重
         before_dedup = len(df_filtered)
-        df_filtered = df_filtered.drop_duplicates(
-            subset=[keyword_column]
-        )
-        after_dedup = len(df_filtered)
-        if before_dedup > after_dedup:
-            st.info(f"🔄 去重: 移除 {before_dedup - after_dedup} 条重复关键词")
+        df_filtered = df_filtered.drop_duplicates(subset=[keyword_column])
+        if before_dedup > len(df_filtered):
+            st.info(f"🔄 去重: 移除 {before_dedup - len(df_filtered)} 条")
 
-        # ===== 翻译功能 =====
+        # 翻译
         if enable_translation and TRANSLATOR_AVAILABLE and len(df_filtered) > 0:
             status_text.text("🌐 准备翻译...")
-            
-            # 获取关键词列表
             keywords = df_filtered[keyword_column].tolist()
+            translations = batch_translate(keywords, progress_bar, status_text)
             
-            # 批量翻译
-            translations = batch_translate(
-                keywords,
-                progress_bar,
-                status_text,
-                delay=0.2
-            )
-            
-            # 获取关键词列的索引位置
             col_index = df_filtered.columns.get_loc(keyword_column)
+            df_filtered.insert(col_index + 1, 'english_translation', translations)
             
-            # 在关键词列后面插入翻译列
-            df_filtered.insert(
-                col_index + 1,
-                'english_translation',
-                translations
-            )
-            
-            # 统计翻译成功数量
             translated_count = sum(1 for t in translations if t and t.strip())
             st.info(f"✅ 成功翻译 {translated_count}/{len(keywords)} 条")
 
         progress_bar.progress(1.0)
-
-        # 显示筛选统计信息
+        
         lang_info = f" + {language_options[second_language]}" if enable_second_lang and second_language else ""
-        status_text.text(
-            f"✅ 筛选完成 - 保留语言: {language_options[target_language]}{lang_info} | 剩余: {len(df_filtered)} 条"
-        )
+        status_text.text(f"✅ 筛选完成 | 保留: {len(df_filtered)} 条 | 语言: {language_options[target_language]}{lang_info}")
 
-        st.success(
-            f"✨ 最终剩余 {len(df_filtered)} 条关键词"
-        )
-
+        st.success(f"✨ 最终剩余 {len(df_filtered)} 条关键词")
         st.dataframe(df_filtered.head(100))
 
-        csv_data = df_filtered.to_csv(
-            index=False
-        ).encode("utf-8-sig")
-
+        csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             "📥 下载结果 CSV",
             csv_data,
