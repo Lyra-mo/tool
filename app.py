@@ -62,60 +62,53 @@ lingua_map = {
 }
 
 # =========================
-# 西语常见词库（用于辅助判断）
+# 各语言常见词库（用于辅助判断）
 # =========================
-SPANISH_COMMON_WORDS = {
-    'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
-    'y', 'o', 'pero', 'por', 'para', 'con', 'sin', 'sobre',
-    'de', 'del', 'al', 'a', 'en', 'entre', 'hasta', 'desde',
-    'que', 'quien', 'cual', 'cuando', 'donde', 'como', 'porque',
-    'es', 'son', 'está', 'están', 'era', 'eran', 'fue', 'fueron',
-    'tiene', 'tienen', 'tenía', 'tenían', 'tuvo', 'tuvieron',
-    'puede', 'pueden', 'podía', 'podían', 'pudo', 'pudieron',
-    'hace', 'hacen', 'hacía', 'hacían', 'hizo', 'hicieron',
-    'dice', 'dicen', 'decía', 'decían', 'dijo', 'dijeron',
-    'se', 'me', 'te', 'nos', 'os', 'lo', 'le', 'les', 'la', 'las',
-    'mi', 'tu', 'su', 'nuestro', 'vuestro', 'sus',
-    'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
-    'aquel', 'aquella', 'aquellos', 'aquellas',
-    'muy', 'mucho', 'poco', 'más', 'menos', 'tan', 'tanto',
-    'bien', 'mal', 'si', 'no', 'también', 'tampoco',
-    'ser', 'estar', 'tener', 'hacer', 'decir', 'ir', 'ver',
-    'poder', 'saber', 'querer', 'llegar', 'llevar', 'dejar',
-    'mirar', 'escuchar', 'hablar', 'comer', 'beber', 'vivir',
-    'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
-    'tv', 'television', 'video', 'audio', 'musica', 'cine',
-    'precio', 'producto', 'servicio', 'empresa', 'tienda'
+LANGUAGE_COMMON_WORDS = {
+    "es": {
+        'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+        'y', 'o', 'pero', 'por', 'para', 'con', 'sin', 'sobre',
+        'de', 'del', 'al', 'a', 'en', 'entre', 'hasta', 'desde',
+        'que', 'quien', 'cual', 'cuando', 'donde', 'como', 'porque',
+        'es', 'son', 'está', 'están', 'era', 'eran', 'fue', 'fueron',
+        'tiene', 'tienen', 'tenía', 'tenían', 'tuvo', 'tuvieron',
+        'puede', 'pueden', 'podía', 'podían', 'pudo', 'pudieron',
+        'hace', 'hacen', 'hacía', 'hacían', 'hizo', 'hicieron',
+        'dice', 'dicen', 'decía', 'decían', 'dijo', 'dijeron',
+        'se', 'me', 'te', 'nos', 'os', 'lo', 'le', 'les', 'la', 'las',
+        'mi', 'tu', 'su', 'nuestro', 'vuestro', 'sus',
+        'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
+        'aquel', 'aquella', 'aquellos', 'aquellas',
+        'muy', 'mucho', 'poco', 'más', 'menos', 'tan', 'tanto',
+        'bien', 'mal', 'si', 'no', 'también', 'tampoco',
+        'ser', 'estar', 'tener', 'hacer', 'decir', 'ir', 'ver',
+        'poder', 'saber', 'querer', 'llegar', 'llevar', 'dejar',
+        'mirar', 'escuchar', 'hablar', 'comer', 'beber', 'vivir',
+        'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
+        'tv', 'television', 'video', 'audio', 'musica', 'cine',
+        'precio', 'producto', 'servicio', 'empresa', 'tienda',
+        'conectar', 'configurar', 'descargar', 'instalar',
+        'aplicacion', 'juego', 'musica', 'pelicula', 'serie'
+    },
+    "en": {
+        'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
+        'can', 'had', 'her', 'was', 'one', 'our', 'out', 'she',
+        'who', 'with', 'from', 'have', 'this', 'they', 'will',
+        'your', 'about', 'been', 'that', 'what', 'when', 'where',
+        'which', 'while', 'would', 'could', 'should', 'might',
+        'free', 'mobile', 'tv', 'projector', 'screen', 'video'
+    }
 }
 
-# 西语常见后缀/词根
-SPANISH_SUFFIXES = {
-    'ción', 'sión', 'xión',  # 名词后缀
-    'mente',  # 副词后缀
-    'dad', 'tad',  # 名词后缀
-    'aje',  # 名词后缀
-    'anza', 'encia', 'ancia',  # 名词后缀
-    'ero', 'era',  # 职业/工具后缀
-    'ista',  # 职业后缀
-    'or', 'ora',  # 施动者后缀
-    'al', 'ar',  # 形容词后缀
-    'ble',  # 形容词后缀
-    'ivo', 'iva',  # 形容词后缀
-    'oso', 'osa',  # 形容词后缀
-}
-
-# 西语常见字母组合
-SPANISH_CHAR_PATTERNS = {
-    'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü',
-    'll', 'rr', 'ch', 'qu'
-}
+# 西语特殊字符
+SPANISH_SPECIAL_CHARS = {'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü'}
 
 # =========================
 # 构建检测器
 # =========================
 detector = LanguageDetectorBuilder.from_languages(
     *lingua_map.values()
-).with_minimum_relative_distance(0.15).build()  # 设置最小相对距离，提高准确率
+).build()
 
 # =========================
 # 翻译缓存
@@ -135,7 +128,6 @@ def translate_to_english(text):
     
     text = str(text).strip()
     
-    # 检查是否是英语
     try:
         detected = detector.detect_language_of(text)
         if detected == Language.ENGLISH:
@@ -143,7 +135,6 @@ def translate_to_english(text):
     except:
         pass
     
-    # 检查缓存
     cache_key = get_cache_key(text)
     if cache_key in translation_cache:
         return translation_cache[cache_key]
@@ -154,7 +145,7 @@ def translate_to_english(text):
         if translated and len(translated.strip()) > 0:
             translation_cache[cache_key] = translated
             return translated
-    except Exception as e:
+    except Exception:
         pass
     
     translation_cache[cache_key] = ""
@@ -192,100 +183,101 @@ def batch_translate(texts, progress_bar, status_text, delay=0.2):
     return results
 
 # =========================
-# 语言检测（增强版）
+# 增强的语言检测函数
 # =========================
-def is_spanish_like(text):
-    """检测文本是否像西班牙语（基于字符特征）"""
+def detect_language_with_confidence(text, target_lang):
+    """
+    检测文本语言并返回置信度评分
+    返回: (语言代码, 置信度分数 0-1)
+    """
     if pd.isna(text) or not str(text).strip():
-        return False
+        return None, 0
     
-    text_lower = str(text).lower().strip()
-    words = re.findall(r'\b\w+\b', text_lower)
+    s = str(text).strip().lower()
+    words = re.findall(r'\b[a-zA-Záéíóúüñ]+(?:['"\-][a-zA-Z]+)*\b', s)
     
     if not words:
-        return False
+        return None, 0
     
-    # 1. 检查西语特殊字符
-    spanish_char_count = sum(1 for ch in text_lower if ch in SPANISH_CHAR_PATTERNS)
-    has_spanish_chars = spanish_char_count > 0
+    # 1. 使用 lingua 检测
+    lingua_detected = None
+    try:
+        detected = detector.detect_language_of(s)
+        if detected:
+            lingua_detected = detected.name.lower()
+    except:
+        pass
     
-    # 2. 检查西语后缀
-    suffix_count = sum(1 for word in words if any(word.endswith(suffix) for suffix in SPANISH_SUFFIXES))
-    suffix_ratio = suffix_count / len(words) if words else 0
+    # 2. 统计各语言词频
+    lang_scores = {}
     
-    # 3. 检查西语常见词
-    common_word_count = sum(1 for word in words if word in SPANISH_COMMON_WORDS)
-    common_ratio = common_word_count / len(words) if words else 0
+    for lang_code, common_words in LANGUAGE_COMMON_WORDS.items():
+        match_count = sum(1 for word in words if word in common_words)
+        if words:
+            score = match_count / len(words)
+            lang_scores[lang_code] = score
     
-    # 4. 检查是否包含英语常见词（用于排除英语）
-    english_common = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out'}
-    english_count = sum(1 for word in words if word in english_common)
+    # 3. 西语特殊字符加分
+    if target_lang == "es" or "es" in lang_scores:
+        special_count = sum(1 for char in s if char in SPANISH_SPECIAL_CHARS)
+        if special_count > 0:
+            lang_scores["es"] = lang_scores.get("es", 0) + min(special_count * 0.05, 0.3)
     
-    # 综合判断
-    score = 0
-    if has_spanish_chars:
-        score += 0.3
-    if suffix_ratio > 0.1:
-        score += min(suffix_ratio, 0.3)
-    if common_ratio > 0.1:
-        score += min(common_ratio, 0.4)
+    # 4. 如果 lingua 检测到了，给予权重
+    if lingua_detected and lingua_detected[:2] in lang_scores:
+        lang_scores[lingua_detected[:2]] = lang_scores.get(lingua_detected[:2], 0) + 0.3
     
-    # 如果英语词太多，降低分数
-    if english_count > 0:
-        english_ratio = english_count / len(words)
-        score = score * (1 - min(english_ratio * 2, 0.5))
+    # 5. 检查是否包含目标语言的关键词特征
+    # 例如：西语中的"en español"、"gratis"等
+    if target_lang == "es":
+        spanish_markers = ['en español', 'gratis', 'proyector', 'movil', 'telefono']
+        marker_count = sum(1 for marker in spanish_markers if marker in s)
+        if marker_count > 0:
+            lang_scores["es"] = lang_scores.get("es", 0) + min(marker_count * 0.1, 0.3)
     
-    return score > 0.25
+    # 6. 如果文本包含多个语言词，选择得分最高的
+    if lang_scores:
+        best_lang = max(lang_scores, key=lang_scores.get)
+        best_score = lang_scores[best_lang]
+        
+        # 如果得分超过阈值，返回该语言
+        if best_score >= 0.15:  # 降低阈值，让混合语言也能被识别
+            return best_lang, min(best_score, 1.0)
+    
+    return None, 0
 
-def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False, confidence_threshold=0.5):
+def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
     """
-    增强的语言检测函数
+    增强的语言检测，能识别混合语言
     """
     if pd.isna(text):
         return True
 
     s = str(text).strip()
 
-    # 太短的文本处理
-    if len(s) < 3:
-        return False if strict else True
-    
-    # 对西班牙语的特别处理
-    if target_lang == "es" or (enable_second and second_lang == "es"):
-        # 使用辅助检测
-        is_spanish = is_spanish_like(s)
-        
-        # 如果短文本且看起来像西语，直接返回True
-        if len(s) < 10 and is_spanish:
-            return True
-    
-    try:
-        # 使用 lingua 检测，获取检测结果和置信度
-        detected = detector.detect_language_of(s)
-        
-        if detected is None:
-            return False
-        
-        # 检查是否匹配主要语言
-        is_main = detected == lingua_map[target_lang]
-        
-        # 如果启用第二语言
-        if enable_second and second_lang:
-            is_second = detected == lingua_map[second_lang]
-            is_match = is_main or is_second
-        else:
-            is_match = is_main
-        
-        # 如果不匹配，进一步检查是否可能是目标语言但被误判
-        if not is_match and target_lang == "es":
-            # 如果lingua没检测为西语，但我们的辅助检测认为是西语
-            if is_spanish_like(s):
-                return True
-        
-        return is_match
+    # 空文本或太短的文本
+    if len(s) < 2:
+        return True
 
-    except Exception as e:
-        return False if strict else True
+    # 使用增强检测
+    detected_lang, confidence = detect_language_with_confidence(s, target_lang)
+    
+    if detected_lang is None:
+        # 如果检测失败，在严格模式下返回False
+        return not strict
+    
+    # 检查是否匹配目标语言
+    is_match = detected_lang == target_lang
+    
+    # 如果启用第二语言
+    if enable_second and second_lang:
+        is_match = is_match or (detected_lang == second_lang)
+    
+    # 如果匹配，但置信度太低，在严格模式下拒绝
+    if is_match and strict and confidence < 0.2:
+        return False
+    
+    return is_match
 
 def batch_language_detection(
     texts,
@@ -322,7 +314,7 @@ def batch_language_detection(
     return results
 
 # =========================
-# 其他函数（品牌过滤、读取文件等保持不变）
+# 其他函数
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -438,11 +430,19 @@ if enable_second_lang:
             st.warning("⚠️ 两种语言不能相同")
     with col4:
         skip_lang_detect = st.checkbox("⚡ 跳过语言检测", value=False)
-        strict_mode = st.checkbox("🎯 严格模式", value=True, help="更准确但可能漏掉一些混合语言文本")
+        strict_mode = st.checkbox(
+            "🎯 严格模式", 
+            value=False,  # 默认关闭，让混合语言能被保留
+            help="开启后会过滤掉混合语言文本，关闭则保留包含目标语言的混合文本"
+        )
 else:
     with col2:
         skip_lang_detect = st.checkbox("⚡ 跳过语言检测", value=False)
-        strict_mode = st.checkbox("🎯 严格模式", value=True, help="更准确但可能漏掉一些混合语言文本")
+        strict_mode = st.checkbox(
+            "🎯 严格模式", 
+            value=False,
+            help="开启后会过滤掉混合语言文本，关闭则保留包含目标语言的混合文本"
+        )
 
 # 翻译选项
 st.markdown("### 🌐 翻译设置")
