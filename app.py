@@ -70,17 +70,17 @@ LANGUAGE_COMMON_WORDS = {
         'y', 'o', 'pero', 'por', 'para', 'con', 'sin', 'sobre',
         'de', 'del', 'al', 'a', 'en', 'entre', 'hasta', 'desde',
         'que', 'quien', 'cual', 'cuando', 'donde', 'como', 'porque',
-        'es', 'son', 'está', 'están', 'era', 'eran', 'fue', 'fueron',
-        'tiene', 'tienen', 'tenía', 'tenían', 'tuvo', 'tuvieron',
-        'puede', 'pueden', 'podía', 'podían', 'pudo', 'pudieron',
-        'hace', 'hacen', 'hacía', 'hacían', 'hizo', 'hicieron',
-        'dice', 'dicen', 'decía', 'decían', 'dijo', 'dijeron',
+        'es', 'son', 'esta', 'estan', 'era', 'eran', 'fue', 'fueron',
+        'tiene', 'tienen', 'tenia', 'tenian', 'tuvo', 'tuvieron',
+        'puede', 'pueden', 'podia', 'podian', 'pudo', 'pudieron',
+        'hace', 'hacen', 'hacia', 'hacian', 'hizo', 'hicieron',
+        'dice', 'dicen', 'decia', 'decian', 'dijo', 'dijeron',
         'se', 'me', 'te', 'nos', 'os', 'lo', 'le', 'les', 'la', 'las',
         'mi', 'tu', 'su', 'nuestro', 'vuestro', 'sus',
         'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
         'aquel', 'aquella', 'aquellos', 'aquellas',
-        'muy', 'mucho', 'poco', 'más', 'menos', 'tan', 'tanto',
-        'bien', 'mal', 'si', 'no', 'también', 'tampoco',
+        'muy', 'mucho', 'poco', 'mas', 'menos', 'tan', 'tanto',
+        'bien', 'mal', 'si', 'no', 'tambien', 'tampoco',
         'ser', 'estar', 'tener', 'hacer', 'decir', 'ir', 'ver',
         'poder', 'saber', 'querer', 'llegar', 'llevar', 'dejar',
         'mirar', 'escuchar', 'hablar', 'comer', 'beber', 'vivir',
@@ -88,7 +88,9 @@ LANGUAGE_COMMON_WORDS = {
         'tv', 'television', 'video', 'audio', 'musica', 'cine',
         'precio', 'producto', 'servicio', 'empresa', 'tienda',
         'conectar', 'configurar', 'descargar', 'instalar',
-        'aplicacion', 'juego', 'musica', 'pelicula', 'serie'
+        'aplicacion', 'juego', 'musica', 'pelicula', 'serie',
+        'espanol', 'ingles', 'frances', 'aleman', 'italiano',
+        'como', 'cuando', 'donde', 'quien', 'cual', 'cuanto'
     },
     "en": {
         'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
@@ -194,7 +196,8 @@ def detect_language_with_confidence(text, target_lang):
         return None, 0
     
     s = str(text).strip().lower()
-    words = re.findall(r'\b[a-zA-Záéíóúüñ]+(?:['"\-][a-zA-Z]+)*\b', s)
+    # 修复正则表达式 - 使用双引号避免转义问题
+    words = re.findall(r'\b[a-zA-Záéíóúüñ]+(?:[-\'][a-zA-Z]+)*\b', s)
     
     if not words:
         return None, 0
@@ -228,9 +231,9 @@ def detect_language_with_confidence(text, target_lang):
         lang_scores[lingua_detected[:2]] = lang_scores.get(lingua_detected[:2], 0) + 0.3
     
     # 5. 检查是否包含目标语言的关键词特征
-    # 例如：西语中的"en español"、"gratis"等
+    # 例如：西语中的"en espanol"、"gratis"等
     if target_lang == "es":
-        spanish_markers = ['en español', 'gratis', 'proyector', 'movil', 'telefono']
+        spanish_markers = ['en espanol', 'gratis', 'proyector', 'movil', 'telefono']
         marker_count = sum(1 for marker in spanish_markers if marker in s)
         if marker_count > 0:
             lang_scores["es"] = lang_scores.get("es", 0) + min(marker_count * 0.1, 0.3)
@@ -432,7 +435,7 @@ if enable_second_lang:
         skip_lang_detect = st.checkbox("⚡ 跳过语言检测", value=False)
         strict_mode = st.checkbox(
             "🎯 严格模式", 
-            value=False,  # 默认关闭，让混合语言能被保留
+            value=False,
             help="开启后会过滤掉混合语言文本，关闭则保留包含目标语言的混合文本"
         )
 else:
