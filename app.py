@@ -62,41 +62,24 @@ lingua_map = {
 }
 
 # =========================
-# 各语言常见词库（用于辅助判断）
+# 各语言常见词库（精简版，只保留最常用的词）
 # =========================
 LANGUAGE_COMMON_WORDS = {
     "es": {
-        'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
-        'y', 'o', 'pero', 'por', 'para', 'con', 'sin', 'sobre',
-        'de', 'del', 'al', 'a', 'en', 'entre', 'hasta', 'desde',
-        'que', 'quien', 'cual', 'cuando', 'donde', 'como', 'porque',
-        'es', 'son', 'esta', 'estan', 'era', 'eran', 'fue', 'fueron',
-        'tiene', 'tienen', 'tenia', 'tenian', 'tuvo', 'tuvieron',
-        'puede', 'pueden', 'podia', 'podian', 'pudo', 'pudieron',
-        'hace', 'hacen', 'hacia', 'hacian', 'hizo', 'hicieron',
-        'dice', 'dicen', 'decia', 'decian', 'dijo', 'dijeron',
-        'se', 'me', 'te', 'nos', 'os', 'lo', 'le', 'les', 'la', 'las',
-        'mi', 'tu', 'su', 'nuestro', 'vuestro', 'sus',
-        'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas',
-        'aquel', 'aquella', 'aquellos', 'aquellas',
-        'muy', 'mucho', 'poco', 'mas', 'menos', 'tan', 'tanto',
-        'bien', 'mal', 'si', 'no', 'tambien', 'tampoco',
-        'ser', 'estar', 'tener', 'hacer', 'decir', 'ir', 'ver',
-        'poder', 'saber', 'querer', 'llegar', 'llevar', 'dejar',
-        'mirar', 'escuchar', 'hablar', 'comer', 'beber', 'vivir',
+        'el', 'la', 'los', 'las', 'un', 'una', 'de', 'en', 'que',
+        'y', 'o', 'por', 'para', 'con', 'sin', 'sobre', 'del', 'al',
+        'es', 'son', 'fue', 'fueron', 'tiene', 'puede', 'hace',
+        'se', 'me', 'te', 'nos', 'lo', 'le', 'les', 'mi', 'tu', 'su',
+        'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'muy',
+        'mucho', 'poco', 'mas', 'menos', 'bien', 'mal', 'si', 'no',
         'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
-        'tv', 'television', 'video', 'audio', 'musica', 'cine',
-        'precio', 'producto', 'servicio', 'empresa', 'tienda',
-        'conectar', 'configurar', 'descargar', 'instalar',
-        'aplicacion', 'juego', 'musica', 'pelicula', 'serie',
-        'espanol', 'ingles', 'frances', 'aleman', 'italiano'
+        'tv', 'video', 'audio', 'musica', 'cine', 'precio',
+        'producto', 'servicio', 'empresa', 'tienda', 'espanol'
     },
     "en": {
         'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
-        'can', 'had', 'her', 'was', 'one', 'our', 'out', 'she',
-        'who', 'with', 'from', 'have', 'this', 'they', 'will',
-        'your', 'about', 'been', 'that', 'what', 'when', 'where',
-        'which', 'while', 'would', 'could', 'should', 'might',
+        'with', 'from', 'have', 'this', 'they', 'will', 'your',
+        'about', 'been', 'that', 'what', 'when', 'where', 'which',
         'free', 'mobile', 'tv', 'projector', 'screen', 'video'
     }
 }
@@ -152,29 +135,25 @@ def translate_to_english(text):
     translation_cache[cache_key] = ""
     return ""
 
-def batch_translate(texts, progress_bar, status_text, delay=0.2):
+def batch_translate(texts, progress_bar, status_text, delay=0.15):
     """批量翻译"""
     if not TRANSLATOR_AVAILABLE:
         return [""] * len(texts)
     
     results = []
     total = len(texts)
-    failed_count = 0
     
     for i, text in enumerate(texts):
         try:
             translated = translate_to_english(text)
             results.append(translated)
-            if not translated or len(translated.strip()) == 0:
-                failed_count += 1
         except:
             results.append("")
-            failed_count += 1
         
-        if i % 5 == 0:
+        if i % 10 == 0:
             time.sleep(delay)
         
-        if (i + 1) % 50 == 0 or i + 1 == total:
+        if (i + 1) % 100 == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
             status_text.text(
@@ -184,99 +163,80 @@ def batch_translate(texts, progress_bar, status_text, delay=0.2):
     return results
 
 # =========================
-# 增强的语言检测函数
+# 优化的语言检测函数
 # =========================
-def detect_language_with_confidence(text, target_lang):
+def detect_language_fast(text, target_lang):
     """
-    检测文本语言并返回置信度评分
-    返回: (语言代码, 置信度分数 0-1)
+    快速语言检测 - 优先使用lingua，只在必要时使用词频分析
     """
     if pd.isna(text) or not str(text).strip():
-        return None, 0
+        return True
     
-    s = str(text).strip().lower()
+    s = str(text).strip()
     
-    # 使用简单的正则表达式提取单词（修复引号问题）
-    words = re.findall(r'[a-zA-Záéíóúüñ]+', s)
+    # 空文本或太短的文本直接返回True
+    if len(s) < 2:
+        return True
     
-    if not words:
-        return None, 0
-    
-    # 1. 使用 lingua 检测
-    lingua_detected = None
+    # 第一步：先使用lingua快速检测（速度快）
     try:
         detected = detector.detect_language_of(s)
         if detected:
-            lingua_detected = detected.name.lower()
+            detected_code = detected.name.lower()
+            # 如果检测到的语言正好是目标语言，直接返回True
+            if detected_code == target_lang:
+                return True
     except:
         pass
     
-    # 2. 统计各语言词频
-    lang_scores = {}
-    
-    for lang_code, common_words in LANGUAGE_COMMON_WORDS.items():
-        match_count = sum(1 for word in words if word in common_words)
-        if words:
-            score = match_count / len(words)
-            lang_scores[lang_code] = score
-    
-    # 3. 西语特殊字符加分
-    if target_lang == "es" or "es" in lang_scores:
-        special_count = sum(1 for char in s if char in SPANISH_SPECIAL_CHARS)
-        if special_count > 0:
-            lang_scores["es"] = lang_scores.get("es", 0) + min(special_count * 0.05, 0.3)
-    
-    # 4. 如果 lingua 检测到了，给予权重
-    if lingua_detected and lingua_detected[:2] in lang_scores:
-        lang_scores[lingua_detected[:2]] = lang_scores.get(lingua_detected[:2], 0) + 0.3
-    
-    # 5. 检查是否包含目标语言的关键词特征
+    # 第二步：对于短文本或混合文本，使用词频分析
+    # 但只对特定语言做额外处理（目前只对西语）
     if target_lang == "es":
-        spanish_markers = ['en espanol', 'gratis', 'proyector', 'movil', 'telefono']
-        marker_count = sum(1 for marker in spanish_markers if marker in s)
-        if marker_count > 0:
-            lang_scores["es"] = lang_scores.get("es", 0) + min(marker_count * 0.1, 0.3)
-    
-    # 6. 如果文本包含多个语言词，选择得分最高的
-    if lang_scores:
-        best_lang = max(lang_scores, key=lang_scores.get)
-        best_score = lang_scores[best_lang]
+        # 快速检查是否有西语特征
+        words = re.findall(r'[a-zA-Záéíóúüñ]+', s.lower())
         
-        # 如果得分超过阈值，返回该语言
-        if best_score >= 0.15:
-            return best_lang, min(best_score, 1.0)
+        if not words:
+            return False
+        
+        # 检查西语特殊字符
+        has_special = any(char in s for char in SPANISH_SPECIAL_CHARS)
+        if has_special:
+            return True
+        
+        # 检查西语常见词（只检查前3个词，提高速度）
+        check_words = words[:5]  # 只检查前5个词
+        for word in check_words:
+            if word in LANGUAGE_COMMON_WORDS["es"]:
+                return True
+        
+        # 检查西语标记词
+        spanish_markers = ['en espanol', 'gratis', 'proyector', 'movil']
+        for marker in spanish_markers:
+            if marker in s.lower():
+                return True
+        
+        return False
     
-    return None, 0
+    return False
 
 def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
     """
-    增强的语言检测，能识别混合语言
+    优化的语言检测
     """
     if pd.isna(text):
         return True
 
     s = str(text).strip()
 
-    # 空文本或太短的文本
     if len(s) < 2:
         return True
 
-    # 使用增强检测
-    detected_lang, confidence = detect_language_with_confidence(s, target_lang)
-    
-    if detected_lang is None:
-        return not strict
-    
-    # 检查是否匹配目标语言
-    is_match = detected_lang == target_lang
+    # 检查主要语言
+    is_match = detect_language_fast(s, target_lang)
     
     # 如果启用第二语言
-    if enable_second and second_lang:
-        is_match = is_match or (detected_lang == second_lang)
-    
-    # 如果匹配，但置信度太低，在严格模式下拒绝
-    if is_match and strict and confidence < 0.2:
-        return False
+    if enable_second and second_lang and not is_match:
+        is_match = detect_language_fast(s, second_lang)
     
     return is_match
 
@@ -294,6 +254,9 @@ def batch_language_detection(
     rejected_count = 0
     kept_count = 0
 
+    # 批量处理，每100条更新一次进度
+    batch_size = 100
+    
     for i, text in enumerate(texts):
         is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
         results.append(is_match)
@@ -303,13 +266,13 @@ def batch_language_detection(
         else:
             rejected_count += 1
 
-        if (i + 1) % 200 == 0 or i + 1 == total:
+        if (i + 1) % batch_size == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
 
             lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
             status_text.text(
-                f"🔍 检测中... {i+1}/{total} ({int(pct*100)}%) | 保留: {kept_count} | 排除: {rejected_count} | 目标: {language_options[target_lang]}{lang_info}"
+                f"🔍 检测中... {i+1}/{total} ({int(pct*100)}%) | 保留: {kept_count} | 排除: {rejected_count}"
             )
 
     return results
@@ -347,6 +310,7 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
     results = []
     removed_examples = []
     total = len(texts)
+    batch_size = 500
 
     for i, val in enumerate(texts):
         if pd.isna(val):
@@ -367,7 +331,7 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
 
             results.append(keep)
 
-        if (i + 1) % 500 == 0 or i + 1 == total:
+        if (i + 1) % batch_size == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
             status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int(pct*100)}%)")
@@ -524,7 +488,7 @@ if start_btn:
         # 显示语言分布
         if not skip_lang_detect and len(df_filtered) > 0:
             with st.expander("📊 筛选后的语言分布"):
-                sample_texts = df_filtered[keyword_column].head(1000).tolist()
+                sample_texts = df_filtered[keyword_column].head(500).tolist()
                 lang_counts = {}
                 for text in sample_texts:
                     if pd.isna(text):
@@ -580,7 +544,7 @@ if start_btn:
         progress_bar.progress(1.0)
         
         lang_info = f" + {language_options[second_language]}" if enable_second_lang and second_language else ""
-        status_text.text(f"✅ 筛选完成 | 保留: {len(df_filtered)} 条 | 语言: {language_options[target_language]}{lang_info}")
+        status_text.text(f"✅ 筛选完成 | 保留: {len(df_filtered)} 条")
 
         st.success(f"✨ 最终剩余 {len(df_filtered)} 条关键词")
         st.dataframe(df_filtered.head(100))
