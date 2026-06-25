@@ -62,7 +62,7 @@ lingua_map = {
 }
 
 # =========================
-# 各语言常见词库（精简版，只保留最常用的词）
+# 各语言常见词库
 # =========================
 LANGUAGE_COMMON_WORDS = {
     "es": {
@@ -74,18 +74,30 @@ LANGUAGE_COMMON_WORDS = {
         'mucho', 'poco', 'mas', 'menos', 'bien', 'mal', 'si', 'no',
         'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
         'tv', 'video', 'audio', 'musica', 'cine', 'precio',
-        'producto', 'servicio', 'empresa', 'tienda', 'espanol'
+        'producto', 'servicio', 'empresa', 'tienda', 'espanol',
+        'como', 'cuando', 'donde', 'quien', 'cual', 'cuanto',
+        'todo', 'todos', 'cada', 'otro', 'mismo', 'gran', 'buen'
     },
     "en": {
         'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
         'with', 'from', 'have', 'this', 'they', 'will', 'your',
         'about', 'been', 'that', 'what', 'when', 'where', 'which',
-        'free', 'mobile', 'tv', 'projector', 'screen', 'video'
+        'free', 'mobile', 'tv', 'projector', 'screen', 'video',
+        'streaming', 'wireless', 'display', 'mirror', 'cast'
     }
 }
 
 # 西语特殊字符
 SPANISH_SPECIAL_CHARS = {'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü'}
+
+# 西语标记词（用于快速识别）
+SPANISH_MARKERS = [
+    'en espanol', 'gratis', 'proyector', 'movil', 'telefono',
+    'pantalla', 'audio', 'musica', 'cine', 'precio',
+    'producto', 'servicio', 'empresa', 'tienda',
+    'como', 'cuando', 'donde', 'porque', 'entonces',
+    'despues', 'antes', 'durante', 'mientras'
+]
 
 # =========================
 # 构建检测器
@@ -163,65 +175,66 @@ def batch_translate(texts, progress_bar, status_text, delay=0.15):
     return results
 
 # =========================
-# 优化的语言检测函数
+# 语言检测函数（改进版）
 # =========================
-def detect_language_fast(text, target_lang):
+def detect_spanish(text):
     """
-    快速语言检测 - 优先使用lingua，只在必要时使用词频分析
+    专门检测西班牙语的函数，能识别混合语言
     """
     if pd.isna(text) or not str(text).strip():
+        return False
+    
+    s = str(text).strip().lower()
+    
+    # 1. 检查西语特殊字符
+    has_special = any(char in s for char in SPANISH_SPECIAL_CHARS)
+    if has_special:
         return True
     
-    s = str(text).strip()
+    # 2. 检查西语标记词
+    for marker in SPANISH_MARKERS:
+        if marker in s:
+            return True
     
-    # 空文本或太短的文本直接返回True
-    if len(s) < 2:
-        return True
-    
-    # 第一步：先使用lingua快速检测（速度快）
+    # 3. 使用 lingua 检测
     try:
         detected = detector.detect_language_of(s)
-        if detected:
-            detected_code = detected.name.lower()
-            # 如果检测到的语言正好是目标语言，直接返回True
-            if detected_code == target_lang:
-                return True
+        if detected == Language.SPANISH:
+            return True
     except:
         pass
     
-    # 第二步：对于短文本或混合文本，使用词频分析
-    # 但只对特定语言做额外处理（目前只对西语）
-    if target_lang == "es":
-        # 快速检查是否有西语特征
-        words = re.findall(r'[a-zA-Záéíóúüñ]+', s.lower())
-        
-        if not words:
-            return False
-        
-        # 检查西语特殊字符
-        has_special = any(char in s for char in SPANISH_SPECIAL_CHARS)
-        if has_special:
-            return True
-        
-        # 检查西语常见词（只检查前3个词，提高速度）
-        check_words = words[:5]  # 只检查前5个词
-        for word in check_words:
-            if word in LANGUAGE_COMMON_WORDS["es"]:
-                return True
-        
-        # 检查西语标记词
-        spanish_markers = ['en espanol', 'gratis', 'proyector', 'movil']
-        for marker in spanish_markers:
-            if marker in s.lower():
-                return True
-        
+    # 4. 词频分析 - 检查西语常见词占比
+    words = re.findall(r'[a-zA-Záéíóúüñ]+', s)
+    if not words:
         return False
     
-    return False
+    # 只检查前10个词
+    check_words = words[:10]
+    spanish_count = sum(1 for word in check_words if word in LANGUAGE_COMMON_WORDS["es"])
+    
+    # 如果有超过2个西语词，认为是西语
+    if spanish_count >= 2:
+        return True
+    
+    # 5. 如果单词总数少，但包含西语词
+    if len(words) <= 3 and spanish_count >= 1:
+        return True
+    
+    # 6. 检查是否包含明显的英语词（排除纯英语）
+    english_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'with', 'from', 'have'}
+    english_count = sum(1 for word in check_words if word in english_words)
+    
+    # 如果英语词占比超过西语词，且没有西语特征，则不是西语
+    if english_count > spanish_count and not has_special:
+        return False
+    
+    # 默认：如果至少有一个西语词，认为是西语
+    return spanish_count > 0
 
 def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
     """
-    优化的语言检测
+    语言检测主函数
     """
     if pd.isna(text):
         return True
@@ -231,14 +244,34 @@ def is_target_language(text, target_lang, second_lang=None, enable_second=False,
     if len(s) < 2:
         return True
 
-    # 检查主要语言
-    is_match = detect_language_fast(s, target_lang)
+    # 对西语使用专门的检测函数
+    if target_lang == "es":
+        is_match = detect_spanish(s)
+        if is_match:
+            return True
+    
+    # 对其他语言使用 lingua 检测
+    try:
+        detected = detector.detect_language_of(s)
+        if detected:
+            detected_code = detected.name.lower()
+            if detected_code == target_lang:
+                return True
+    except:
+        pass
     
     # 如果启用第二语言
-    if enable_second and second_lang and not is_match:
-        is_match = detect_language_fast(s, second_lang)
+    if enable_second and second_lang:
+        if second_lang == "es":
+            return detect_spanish(s)
+        try:
+            detected = detector.detect_language_of(s)
+            if detected and detected.name.lower() == second_lang:
+                return True
+        except:
+            pass
     
-    return is_match
+    return False
 
 def batch_language_detection(
     texts,
@@ -254,7 +287,6 @@ def batch_language_detection(
     rejected_count = 0
     kept_count = 0
 
-    # 批量处理，每100条更新一次进度
     batch_size = 100
     
     for i, text in enumerate(texts):
