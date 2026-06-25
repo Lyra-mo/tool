@@ -2,9 +2,17 @@ import streamlit as st
 import pandas as pd
 import re
 import time
+import hashlib
 
 from lingua import Language, LanguageDetectorBuilder
-from deep_translator import GoogleTranslator
+
+# 尝试导入翻译库，如果失败则使用备选方案
+try:
+    from deep_translator import GoogleTranslator
+    TRANSLATOR_AVAILABLE = True
+except ImportError:
+    TRANSLATOR_AVAILABLE = False
+    st.warning("⚠️ deep_translator 未安装，翻译功能将不可用")
 
 # =========================
 # 页面配置
@@ -83,10 +91,17 @@ detector = LanguageDetectorBuilder.from_languages(
 # =========================
 translation_cache = {}
 
+def get_cache_key(text):
+    """生成缓存键"""
+    return hashlib.md5(text.encode('utf-8')).hexdigest()
+
 def translate_to_english(text, source_lang=None):
     """
-    将文本翻译成英语，带缓存机制
+    将文本翻译成英语，带缓存机制和更好的错误处理
     """
+    if not TRANSLATOR_AVAILABLE:
+        return ""
+    
     if pd.isna(text) or not str(text).strip():
         return ""
     
@@ -101,47 +116,63 @@ def translate_to_english(text, source_lang=None):
         pass
     
     # 检查缓存
-    cache_key = text
+    cache_key = get_cache_key(text)
     if cache_key in translation_cache:
         return translation_cache[cache_key]
     
+    # 尝试多种翻译方法
+    translations_attempted = []
+    
+    # 方法1: 使用 Google Translator
     try:
-        # 使用 Google 翻译
         translator = GoogleTranslator(source='auto', target='en')
         translated = translator.translate(text)
-        
-        # 存入缓存
-        translation_cache[cache_key] = translated
-        return translated
+        if translated and len(translated.strip()) > 0:
+            translation_cache[cache_key] = translated
+            return translated
     except Exception as e:
-        # 翻译失败时返回空字符串
-        return ""
+        translations_attempted.append(f"Google: {str(e)[:50]}")
+    
+    # 如果所有方法都失败，返回空字符串
+    translation_cache[cache_key] = ""
+    return ""
 
 def batch_translate(
     texts,
     progress_bar,
     status_text,
-    delay=0.1  # 避免请求过快
+    delay=0.2  # 增加延迟避免被限制
 ):
     """
-    批量翻译，带进度显示
+    批量翻译，带进度显示和错误恢复
     """
+    if not TRANSLATOR_AVAILABLE:
+        status_text.text("⚠️ 翻译模块不可用，跳过翻译")
+        return [""] * len(texts)
+    
     results = []
     total = len(texts)
+    failed_count = 0
     
     for i, text in enumerate(texts):
-        translated = translate_to_english(text)
-        results.append(translated)
+        try:
+            translated = translate_to_english(text)
+            results.append(translated)
+            if not translated or len(translated.strip()) == 0:
+                failed_count += 1
+        except Exception as e:
+            results.append("")
+            failed_count += 1
         
         # 添加小延迟避免被限制
-        if i % 10 == 0:
+        if i % 5 == 0:
             time.sleep(delay)
         
         if (i + 1) % 50 == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
             status_text.text(
-                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%)"
+                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%) [失败: {failed_count}]"
             )
     
     return results
@@ -184,12 +215,26 @@ if enable_second_lang:
             value=False,
             help="如果文件已经全部是目标语言，可以跳过检测"
         )
+        
+        # 增加严格模式选项
+        strict_mode = st.checkbox(
+            "🎯 严格模式",
+            value=False,
+            help="更严格的语言检测，减少误判"
+        )
 else:
     with col2:
         skip_lang_detect = st.checkbox(
             "⚡ 跳过语言检测",
             value=False,
             help="如果文件已经全部是目标语言，可以跳过检测"
+        )
+        
+        # 增加严格模式选项
+        strict_mode = st.checkbox(
+            "🎯 严格模式",
+            value=False,
+            help="更严格的语言检测，减少误判"
         )
 
 # =========================
@@ -208,10 +253,14 @@ with col_trans1:
 
 with col_trans2:
     if enable_translation:
-        st.info(
-            "💡 翻译使用 Google Translate API，需要联网。"
-            "翻译速度取决于网络状况，大量数据可能需要较长时间。"
-        )
+        if TRANSLATOR_AVAILABLE:
+            st.info(
+                "💡 翻译使用 Google Translate API，需要联网。"
+                "翻译速度取决于网络状况，大量数据可能需要较长时间。"
+                "\n\n⚠️ 如果翻译失败，对应单元格将为空。"
+            )
+        else:
+            st.error("❌ deep_translator 未安装，翻译功能不可用")
 
 # =========================
 # 品牌词
@@ -257,23 +306,47 @@ uploaded_file = st.file_uploader(
 )
 
 # =========================
-# 语言检测
+# 语言检测（改进版）
 # =========================
-def is_target_language(text, target_lang, second_lang=None, enable_second=False):
-
+def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
+    """
+    改进的语言检测函数，支持严格模式
+    """
     if pd.isna(text):
         return True
 
     s = str(text).strip()
 
-    if len(s) < 2:
-        return True
+    # 太短的文本难以准确检测，在严格模式下直接返回False
+    if len(s) < 3:
+        return False if strict else True
+    
+    # 如果文本包含多种字符类型，可能不是单一语言
+    # 在严格模式下，要求更长的文本才能准确检测
+    if strict and len(s) < 10:
+        # 对于短文本，检查是否包含目标语言的常见字符
+        # 这里简单处理：如果文本包含非ASCII字符，可能是非英语
+        if target_lang == "en" and not s.isascii():
+            return False
+        elif target_lang != "en" and s.isascii():
+            return False
 
     try:
+        # 使用 lingua 检测
         detected = detector.detect_language_of(s)
-
+        
         if detected is None:
             return False
+        
+        # 在严格模式下，检查置信度（如果lingua支持）
+        # 这里我们简单处理：检测到的语言必须在多种检测中一致
+        if strict:
+            # 对短文本，二次确认
+            if len(s) < 20:
+                # 使用不同的检测方法或再次检测
+                detected2 = detector.detect_language_of(s[:len(s)//2] if len(s) > 1 else s)
+                if detected2 and detected != detected2:
+                    return False
 
         # 检查是否匹配主要语言
         is_main = detected == lingua_map[target_lang]
@@ -285,8 +358,9 @@ def is_target_language(text, target_lang, second_lang=None, enable_second=False)
         
         return is_main
 
-    except Exception:
-        return False
+    except Exception as e:
+        # 检测失败，在严格模式下返回False，否则返回True
+        return False if strict else True
 
 def batch_language_detection(
     texts,
@@ -294,26 +368,27 @@ def batch_language_detection(
     progress_bar,
     status_text,
     second_lang=None,
-    enable_second=False
+    enable_second=False,
+    strict=False
 ):
     results = []
-
     total = len(texts)
+    rejected_count = 0
 
     for i, text in enumerate(texts):
-
-        results.append(
-            is_target_language(text, target_lang, second_lang, enable_second)
-        )
+        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
+        results.append(is_match)
+        
+        if not is_match:
+            rejected_count += 1
 
         if (i + 1) % 200 == 0 or i + 1 == total:
             pct = (i + 1) / total
-
             progress_bar.progress(pct)
 
             lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
             status_text.text(
-                f"🔍 语言检测中... {i+1}/{total} ({int(pct*100)}%) [目标: {language_options[target_lang]}{lang_info}]"
+                f"🔍 语言检测中... {i+1}/{total} ({int(pct*100)}%) [目标: {language_options[target_lang]}{lang_info}] [已排除: {rejected_count}]"
             )
 
     return results
@@ -495,7 +570,6 @@ if start_btn:
         # 语言过滤
         if skip_lang_detect:
             keep_mask = [True] * len(texts)
-
         else:
             keep_mask = batch_language_detection(
                 texts,
@@ -503,30 +577,61 @@ if start_btn:
                 progress_bar,
                 status_text,
                 second_language if enable_second_lang else None,
-                enable_second_lang
+                enable_second_lang,
+                strict_mode
             )
 
         df_filtered = df[keep_mask].copy()
 
+        # 显示过滤后的语言分布
+        if not skip_lang_detect and len(df_filtered) > 0:
+            with st.expander("📊 筛选后的语言分布"):
+                sample_texts = df_filtered[keyword_column].head(500).tolist()
+                lang_counts = {}
+                for text in sample_texts:
+                    if pd.isna(text):
+                        continue
+                    try:
+                        detected = detector.detect_language_of(str(text).strip()[:100])
+                        if detected:
+                            lang_name = detected.name.lower()
+                            lang_counts[lang_name] = lang_counts.get(lang_name, 0) + 1
+                    except:
+                        pass
+                
+                if lang_counts:
+                    lang_df = pd.DataFrame(
+                        list(lang_counts.items()),
+                        columns=["语言", "数量"]
+                    ).sort_values("数量", ascending=False)
+                    st.dataframe(lang_df)
+
         # 品牌过滤
         if brands:
-
             keep_mask, removed_examples = batch_brand_filter(
                 df_filtered[keyword_column].tolist(),
                 brands,
                 progress_bar,
                 status_text
             )
-
             df_filtered = df_filtered[keep_mask].copy()
+            
+            if removed_examples:
+                with st.expander("📝 被过滤的品牌词示例"):
+                    for example in removed_examples:
+                        st.write(f"- {example}")
 
         # 去重
+        before_dedup = len(df_filtered)
         df_filtered = df_filtered.drop_duplicates(
             subset=[keyword_column]
         )
+        after_dedup = len(df_filtered)
+        if before_dedup > after_dedup:
+            st.info(f"🔄 去重: 移除 {before_dedup - after_dedup} 条重复关键词")
 
-        # ===== 翻译功能（修改部分） =====
-        if enable_translation and len(df_filtered) > 0:
+        # ===== 翻译功能 =====
+        if enable_translation and TRANSLATOR_AVAILABLE and len(df_filtered) > 0:
             status_text.text("🌐 准备翻译...")
             
             # 获取关键词列表
@@ -537,7 +642,7 @@ if start_btn:
                 keywords,
                 progress_bar,
                 status_text,
-                delay=0.1
+                delay=0.2
             )
             
             # 获取关键词列的索引位置
@@ -545,7 +650,7 @@ if start_btn:
             
             # 在关键词列后面插入翻译列
             df_filtered.insert(
-                col_index + 1,  # 在关键词列后面插入
+                col_index + 1,
                 'english_translation',
                 translations
             )
@@ -559,35 +664,12 @@ if start_btn:
         # 显示筛选统计信息
         lang_info = f" + {language_options[second_language]}" if enable_second_lang and second_language else ""
         status_text.text(
-            f"✅ 筛选完成 - 保留语言: {language_options[target_language]}{lang_info}"
+            f"✅ 筛选完成 - 保留语言: {language_options[target_language]}{lang_info} | 剩余: {len(df_filtered)} 条"
         )
 
         st.success(
-            f"✨ 剩余 {len(df_filtered)} 条关键词"
+            f"✨ 最终剩余 {len(df_filtered)} 条关键词"
         )
-
-        # 显示语言分布（如果启用第二语言）
-        if enable_second_lang and not skip_lang_detect and len(df_filtered) > 0:
-            with st.expander("📊 查看语言分布"):
-                sample_texts = df_filtered[keyword_column].head(1000).tolist()
-                lang_counts = {}
-                for text in sample_texts:
-                    if pd.isna(text):
-                        continue
-                    try:
-                        detected = detector.detect_language_of(str(text).strip())
-                        if detected:
-                            lang_name = detected.name.lower()
-                            lang_counts[lang_name] = lang_counts.get(lang_name, 0) + 1
-                    except:
-                        pass
-                
-                if lang_counts:
-                    lang_df = pd.DataFrame(
-                        list(lang_counts.items()),
-                        columns=["语言", "数量"]
-                    ).sort_values("数量", ascending=False)
-                    st.dataframe(lang_df)
 
         st.dataframe(df_filtered.head(100))
 
