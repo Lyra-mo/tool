@@ -89,8 +89,7 @@ LANGUAGE_COMMON_WORDS = {
         'precio', 'producto', 'servicio', 'empresa', 'tienda',
         'conectar', 'configurar', 'descargar', 'instalar',
         'aplicacion', 'juego', 'musica', 'pelicula', 'serie',
-        'espanol', 'ingles', 'frances', 'aleman', 'italiano',
-        'como', 'cuando', 'donde', 'quien', 'cual', 'cuanto'
+        'espanol', 'ingles', 'frances', 'aleman', 'italiano'
     },
     "en": {
         'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
@@ -196,8 +195,9 @@ def detect_language_with_confidence(text, target_lang):
         return None, 0
     
     s = str(text).strip().lower()
-    # 修复正则表达式 - 使用双引号避免转义问题
-    words = re.findall(r'\b[a-zA-Záéíóúüñ]+(?:[-\'][a-zA-Z]+)*\b', s)
+    
+    # 使用简单的正则表达式提取单词（修复引号问题）
+    words = re.findall(r'[a-zA-Záéíóúüñ]+', s)
     
     if not words:
         return None, 0
@@ -231,7 +231,6 @@ def detect_language_with_confidence(text, target_lang):
         lang_scores[lingua_detected[:2]] = lang_scores.get(lingua_detected[:2], 0) + 0.3
     
     # 5. 检查是否包含目标语言的关键词特征
-    # 例如：西语中的"en espanol"、"gratis"等
     if target_lang == "es":
         spanish_markers = ['en espanol', 'gratis', 'proyector', 'movil', 'telefono']
         marker_count = sum(1 for marker in spanish_markers if marker in s)
@@ -244,7 +243,7 @@ def detect_language_with_confidence(text, target_lang):
         best_score = lang_scores[best_lang]
         
         # 如果得分超过阈值，返回该语言
-        if best_score >= 0.15:  # 降低阈值，让混合语言也能被识别
+        if best_score >= 0.15:
             return best_lang, min(best_score, 1.0)
     
     return None, 0
@@ -266,7 +265,6 @@ def is_target_language(text, target_lang, second_lang=None, enable_second=False,
     detected_lang, confidence = detect_language_with_confidence(s, target_lang)
     
     if detected_lang is None:
-        # 如果检测失败，在严格模式下返回False
         return not strict
     
     # 检查是否匹配目标语言
