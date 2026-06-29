@@ -1,8 +1,3 @@
-# 在 fastText 导入部分后面添加
-st.sidebar.write("🔍 调试信息：")
-st.sidebar.write(f"fasttext 可用: {FASTTEXT_AVAILABLE}")
-if FASTTEXT_AVAILABLE:
-    st.sidebar.write(f"模型文件存在: {os.path.exists(MODEL_PATH)}")
 import streamlit as st
 import pandas as pd
 import re
