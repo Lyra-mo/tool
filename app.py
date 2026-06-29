@@ -3,7 +3,6 @@ import pandas as pd
 import re
 import time
 import hashlib
-from collections import Counter
 
 from lingua import Language, LanguageDetectorBuilder
 
@@ -62,44 +61,6 @@ lingua_map = {
 }
 
 # =========================
-# 各语言常见词库
-# =========================
-LANGUAGE_COMMON_WORDS = {
-    "es": {
-        'el', 'la', 'los', 'las', 'un', 'una', 'de', 'en', 'que',
-        'y', 'o', 'por', 'para', 'con', 'sin', 'sobre', 'del', 'al',
-        'es', 'son', 'fue', 'fueron', 'tiene', 'puede', 'hace',
-        'se', 'me', 'te', 'nos', 'lo', 'le', 'les', 'mi', 'tu', 'su',
-        'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'muy',
-        'mucho', 'poco', 'mas', 'menos', 'bien', 'mal', 'si', 'no',
-        'proyector', 'movil', 'telefono', 'pantalla', 'gratis',
-        'tv', 'video', 'audio', 'musica', 'cine', 'precio',
-        'producto', 'servicio', 'empresa', 'tienda', 'espanol',
-        'como', 'cuando', 'donde', 'quien', 'cual', 'cuanto',
-        'todo', 'todos', 'cada', 'otro', 'mismo', 'gran', 'buen'
-    },
-    "en": {
-        'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all',
-        'with', 'from', 'have', 'this', 'they', 'will', 'your',
-        'about', 'been', 'that', 'what', 'when', 'where', 'which',
-        'free', 'mobile', 'tv', 'projector', 'screen', 'video',
-        'streaming', 'wireless', 'display', 'mirror', 'cast'
-    }
-}
-
-# 西语特殊字符
-SPANISH_SPECIAL_CHARS = {'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü'}
-
-# 西语标记词（用于快速识别）
-SPANISH_MARKERS = [
-    'en espanol', 'gratis', 'proyector', 'movil', 'telefono',
-    'pantalla', 'audio', 'musica', 'cine', 'precio',
-    'producto', 'servicio', 'empresa', 'tienda',
-    'como', 'cuando', 'donde', 'porque', 'entonces',
-    'despues', 'antes', 'durante', 'mientras'
-]
-
-# =========================
 # 构建检测器
 # =========================
 detector = LanguageDetectorBuilder.from_languages(
@@ -115,7 +76,6 @@ def get_cache_key(text):
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 def translate_to_english(text):
-    """翻译文本到英语"""
     if not TRANSLATOR_AVAILABLE:
         return ""
     
@@ -148,7 +108,6 @@ def translate_to_english(text):
     return ""
 
 def batch_translate(texts, progress_bar, status_text, delay=0.15):
-    """批量翻译"""
     if not TRANSLATOR_AVAILABLE:
         return [""] * len(texts)
     
@@ -175,103 +134,43 @@ def batch_translate(texts, progress_bar, status_text, delay=0.15):
     return results
 
 # =========================
-# 语言检测函数（改进版）
+# 语言检测函数（稳定版）
 # =========================
-def detect_spanish(text):
+def detect_language(text, target_lang, second_lang=None, enable_second=False):
     """
-    专门检测西班牙语的函数，能识别混合语言
+    使用 lingua 进行语言检测，并处理特殊情况
     """
     if pd.isna(text) or not str(text).strip():
-        return False
-    
-    s = str(text).strip().lower()
-    
-    # 1. 检查西语特殊字符
-    has_special = any(char in s for char in SPANISH_SPECIAL_CHARS)
-    if has_special:
         return True
     
-    # 2. 检查西语标记词
-    for marker in SPANISH_MARKERS:
-        if marker in s:
-            return True
-    
-    # 3. 使用 lingua 检测
-    try:
-        detected = detector.detect_language_of(s)
-        if detected == Language.SPANISH:
-            return True
-    except:
-        pass
-    
-    # 4. 词频分析 - 检查西语常见词占比
-    words = re.findall(r'[a-zA-Záéíóúüñ]+', s)
-    if not words:
-        return False
-    
-    # 只检查前10个词
-    check_words = words[:10]
-    spanish_count = sum(1 for word in check_words if word in LANGUAGE_COMMON_WORDS["es"])
-    
-    # 如果有超过2个西语词，认为是西语
-    if spanish_count >= 2:
-        return True
-    
-    # 5. 如果单词总数少，但包含西语词
-    if len(words) <= 3 and spanish_count >= 1:
-        return True
-    
-    # 6. 检查是否包含明显的英语词（排除纯英语）
-    english_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'with', 'from', 'have'}
-    english_count = sum(1 for word in check_words if word in english_words)
-    
-    # 如果英语词占比超过西语词，且没有西语特征，则不是西语
-    if english_count > spanish_count and not has_special:
-        return False
-    
-    # 默认：如果至少有一个西语词，认为是西语
-    return spanish_count > 0
-
-def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
-    """
-    语言检测主函数
-    """
-    if pd.isna(text):
-        return True
-
     s = str(text).strip()
-
-    if len(s) < 2:
+    
+    # 太短的文本直接保留（避免误判）
+    if len(s) < 3:
         return True
-
-    # 对西语使用专门的检测函数
-    if target_lang == "es":
-        is_match = detect_spanish(s)
-        if is_match:
-            return True
     
-    # 对其他语言使用 lingua 检测
     try:
+        # 使用 lingua 检测
         detected = detector.detect_language_of(s)
-        if detected:
-            detected_code = detected.name.lower()
-            if detected_code == target_lang:
-                return True
-    except:
-        pass
-    
-    # 如果启用第二语言
-    if enable_second and second_lang:
-        if second_lang == "es":
-            return detect_spanish(s)
-        try:
-            detected = detector.detect_language_of(s)
-            if detected and detected.name.lower() == second_lang:
-                return True
-        except:
-            pass
-    
-    return False
+        
+        if detected is None:
+            # 无法检测时，检查是否包含目标语言特征
+            return False
+        
+        detected_code = detected.name.lower()
+        
+        # 检查是否匹配主要语言
+        is_match = (detected_code == target_lang)
+        
+        # 如果启用第二语言
+        if enable_second and second_lang:
+            is_match = is_match or (detected_code == second_lang)
+        
+        return is_match
+        
+    except Exception as e:
+        # 检测出错时，保守处理：保留文本
+        return True
 
 def batch_language_detection(
     texts,
@@ -290,7 +189,7 @@ def batch_language_detection(
     batch_size = 100
     
     for i, text in enumerate(texts):
-        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
+        is_match = detect_language(text, target_lang, second_lang, enable_second)
         results.append(is_match)
         
         if is_match:
@@ -310,7 +209,7 @@ def batch_language_detection(
     return results
 
 # =========================
-# 其他函数
+# 其他函数（保持不变）
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -430,7 +329,7 @@ if enable_second_lang:
         strict_mode = st.checkbox(
             "🎯 严格模式", 
             value=False,
-            help="开启后会过滤掉混合语言文本，关闭则保留包含目标语言的混合文本"
+            help="开启后更严格地过滤语言"
         )
 else:
     with col2:
@@ -438,7 +337,7 @@ else:
         strict_mode = st.checkbox(
             "🎯 严格模式", 
             value=False,
-            help="开启后会过滤掉混合语言文本，关闭则保留包含目标语言的混合文本"
+            help="开启后更严格地过滤语言"
         )
 
 # 翻译选项
