@@ -82,54 +82,57 @@ FASTTEXT_LANG_MAP = {
 }
 
 # =========================
-# 通用语言检测函数（适用于所有语言）
+# 通用语言检测函数（优化版）
 # =========================
-def detect_language_universal(text, target_lang):
+def detect_language_universal(text, target_lang, strict=False):
     """
-    通用语言检测 - 检测整句 + 检测每个单词
-    适用于所有 16 种语言，无需为每种语言单独配置
+    通用语言检测 - 引入严格模式，并修复单词检测的高误判率
     """
     if not FASTTEXT_AVAILABLE or pd.isna(text) or not str(text).strip():
         return False
     
-    s = str(text).strip()
+    # 替换换行符（fastText对换行符很敏感，容易报错或影响判断）
+    s = str(text).strip().replace('\n', ' ')
     
-    # 方法1：检测整句
     try:
-        predictions = fasttext_model.predict(s, k=3)
-        labels = predictions[0]
-        scores = predictions[1]
-        
-        for label, score in zip(labels, scores):
-            lang_code = label.replace("__label__", "")
-            if lang_code in FASTTEXT_LANG_MAP:
-                detected = FASTTEXT_LANG_MAP[lang_code]
-                # 如果整句被检测为目标语言，且置信度 > 0.3
-                if detected == target_lang and score > 0.3:
-                    return True
+        if strict:
+            # 🎯 严格模式：只看整句的第一预测结果（Top-1）
+            predictions = fasttext_model.predict(s, k=1)
+            label = predictions[0][0].replace("__label__", "")
+            if label in FASTTEXT_LANG_MAP and FASTTEXT_LANG_MAP[label] == target_lang:
+                return True
+            return False
+            
+        else:
+            # 🌊 宽松模式：整句预测的前3名包含目标语言，且置信度达标 (> 0.15)
+            predictions = fasttext_model.predict(s, k=3)
+            labels = predictions[0]
+            scores = predictions[1]
+            
+            for label, score in zip(labels, scores):
+                lang_code = label.replace("__label__", "")
+                if lang_code in FASTTEXT_LANG_MAP:
+                    detected = FASTTEXT_LANG_MAP[lang_code]
+                    if detected == target_lang and score > 0.15: 
+                        return True
+            
+            # 方法2作为兜底：拆分单词检测，但提高门槛防止全量放行
+            words = re.findall(r'[a-zA-ZÀ-ÿ]+', s)
+            # 过滤掉长度小于3的词（因为1-2个字母测语言纯属随机扔飞镖）
+            valid_words = [w for w in words if len(w) >= 3] 
+            
+            for word in valid_words:
+                word_pred = fasttext_model.predict(word, k=1)
+                word_label = word_pred[0][0].replace("__label__", "")
+                word_score = word_pred[1][0]
+                
+                if word_label in FASTTEXT_LANG_MAP:
+                    detected = FASTTEXT_LANG_MAP[word_label]
+                    # 单词级检测必须非常严格，置信度必须大于 0.6 才能作数
+                    if detected == target_lang and word_score > 0.6:
+                        return True
     except:
         pass
-    
-    # 方法2：拆分单词，逐个检测
-    # 匹配所有字母（包括带重音和特殊字符的）
-    words = re.findall(r'[a-zA-ZÀ-ÿ]+', s)
-    
-    for word in words:
-        if len(word) < 2:  # 跳过太短的词
-            continue
-            
-        try:
-            predictions = fasttext_model.predict(word, k=1)
-            label = predictions[0][0].replace("__label__", "")
-            score = predictions[1][0]
-            
-            if label in FASTTEXT_LANG_MAP:
-                detected = FASTTEXT_LANG_MAP[label]
-                # 只要有一个词被检测为目标语言，就返回 True
-                if detected == target_lang and score > 0.3:
-                    return True
-        except:
-            continue
     
     return False
 
@@ -142,17 +145,17 @@ def is_target_language(text, target_lang, second_lang=None, enable_second=False,
     if len(s) < 2:
         return True
 
-    # 使用通用检测
-    is_match = detect_language_universal(s, target_lang)
+    # 🚨 关键修复：把 strict 参数传递给底层检测函数
+    is_match = detect_language_universal(s, target_lang, strict=strict)
     
     # 如果启用第二语言
     if enable_second and second_lang and not is_match:
-        is_match = detect_language_universal(s, second_lang)
+        is_match = detect_language_universal(s, second_lang, strict=strict)
     
     return is_match
 
 # =========================
-# 批量检测（同之前一样）
+# 批量检测
 # =========================
 def batch_language_detection(
     texts,
@@ -191,7 +194,7 @@ def batch_language_detection(
     return results
 
 # =========================
-# 其他函数保持不变...
+# 其他函数
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -261,7 +264,7 @@ def read_file_smart(uploaded_file):
         return None
 
 # =========================
-# Streamlit UI（保持不变）
+# Streamlit UI
 # =========================
 
 # 显示状态
