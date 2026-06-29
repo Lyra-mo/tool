@@ -3,8 +3,8 @@ import pandas as pd
 import re
 import time
 import hashlib
-
-from lingua import Language, LanguageDetectorBuilder
+import os
+import urllib.request
 
 # 尝试导入翻译库
 try:
@@ -14,10 +14,63 @@ except ImportError:
     TRANSLATOR_AVAILABLE = False
 
 # =========================
-# 页面配置
+# fastText 语言检测
 # =========================
-st.set_page_config(page_title="关键词筛选工具", layout="wide")
-st.title("🔧 关键词筛选工具")
+try:
+    import fasttext
+    FASTTEXT_AVAILABLE = True
+    
+    # 使用轻量模型（7MB），如果下载失败则使用完整版（130MB）
+    MODEL_PATH = "lid.176.ftz"  # 优先使用轻量版
+    FALLBACK_MODEL = "lid.176.bin"
+    
+    def download_model():
+        """下载 fastText 模型（自动选择轻量版）"""
+        if os.path.exists(MODEL_PATH):
+            return True
+        
+        # 尝试下载轻量版（7MB）
+        urls = [
+            "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz",
+            "https://huggingface.co/facebook/fasttext-language-identification/resolve/main/lid.176.ftz",
+        ]
+        
+        for url in urls:
+            try:
+                st.info(f"📥 下载语言检测模型（7MB）...")
+                urllib.request.urlretrieve(url, MODEL_PATH)
+                st.success("✅ 模型下载完成！")
+                return True
+            except:
+                continue
+        
+        # 如果轻量版下载失败，尝试完整版
+        try:
+            st.info("📥 下载完整模型（130MB），请耐心等待...")
+            url = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
+            urllib.request.urlretrieve(url, FALLBACK_MODEL)
+            st.success("✅ 完整模型下载完成！")
+            return True
+        except Exception as e:
+            st.error(f"❌ 模型下载失败: {e}")
+            return False
+    
+    # 下载模型
+    if not os.path.exists(MODEL_PATH) and not os.path.exists(FALLBACK_MODEL):
+        if not download_model():
+            FASTTEXT_AVAILABLE = False
+    
+    # 加载模型
+    if FASTTEXT_AVAILABLE:
+        try:
+            model_path = MODEL_PATH if os.path.exists(MODEL_PATH) else FALLBACK_MODEL
+            fasttext_model = fasttext.load_model(model_path)
+        except:
+            FASTTEXT_AVAILABLE = False
+            
+except ImportError:
+    FASTTEXT_AVAILABLE = False
+    st.warning("⚠️ fasttext 未安装，将使用备用检测方案")
 
 # =========================
 # 语言映射
@@ -41,136 +94,134 @@ language_options = {
     "vi": "越南语"
 }
 
-lingua_map = {
-    "en": Language.ENGLISH,
-    "pt": Language.PORTUGUESE,
-    "es": Language.SPANISH,
-    "de": Language.GERMAN,
-    "fr": Language.FRENCH,
-    "it": Language.ITALIAN,
-    "ja": Language.JAPANESE,
-    "ko": Language.KOREAN,
-    "zh": Language.CHINESE,
-    "ru": Language.RUSSIAN,
-    "ar": Language.ARABIC,
-    "th": Language.THAI,
-    "id": Language.INDONESIAN,
-    "tr": Language.TURKISH,
-    "pl": Language.POLISH,
-    "vi": Language.VIETNAMESE
+# fastText 语言代码映射
+FASTTEXT_LANG_MAP = {
+    "en": "en",
+    "es": "es",
+    "pt": "pt",
+    "de": "de",
+    "fr": "fr",
+    "it": "it",
+    "ja": "ja",
+    "ko": "ko",
+    "zh": "zh",
+    "ru": "ru",
+    "ar": "ar",
+    "th": "th",
+    "id": "id",
+    "tr": "tr",
+    "pl": "pl",
+    "vi": "vi"
 }
 
 # =========================
-# 构建检测器
+# 语言检测函数（使用 fastText）
 # =========================
-detector = LanguageDetectorBuilder.from_languages(
-    *lingua_map.values()
-).build()
-
-# =========================
-# 翻译缓存
-# =========================
-translation_cache = {}
-
-def get_cache_key(text):
-    return hashlib.md5(text.encode('utf-8')).hexdigest()
-
-def translate_to_english(text):
-    if not TRANSLATOR_AVAILABLE:
-        return ""
-    
-    if pd.isna(text) or not str(text).strip():
-        return ""
-    
-    text = str(text).strip()
-    
-    try:
-        detected = detector.detect_language_of(text)
-        if detected == Language.ENGLISH:
-            return text
-    except:
-        pass
-    
-    cache_key = get_cache_key(text)
-    if cache_key in translation_cache:
-        return translation_cache[cache_key]
-    
-    try:
-        translator = GoogleTranslator(source='auto', target='en')
-        translated = translator.translate(text)
-        if translated and len(translated.strip()) > 0:
-            translation_cache[cache_key] = translated
-            return translated
-    except Exception:
-        pass
-    
-    translation_cache[cache_key] = ""
-    return ""
-
-def batch_translate(texts, progress_bar, status_text, delay=0.15):
-    if not TRANSLATOR_AVAILABLE:
-        return [""] * len(texts)
-    
-    results = []
-    total = len(texts)
-    
-    for i, text in enumerate(texts):
-        try:
-            translated = translate_to_english(text)
-            results.append(translated)
-        except:
-            results.append("")
-        
-        if i % 10 == 0:
-            time.sleep(delay)
-        
-        if (i + 1) % 100 == 0 or i + 1 == total:
-            pct = (i + 1) / total
-            progress_bar.progress(pct)
-            status_text.text(
-                f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%)"
-            )
-    
-    return results
-
-# =========================
-# 语言检测函数（稳定版）
-# =========================
-def detect_language(text, target_lang, second_lang=None, enable_second=False):
+def detect_language_fasttext(text):
     """
-    使用 lingua 进行语言检测，并处理特殊情况
+    使用 fastText 检测语言
+    返回: (语言代码, 置信度)
     """
-    if pd.isna(text) or not str(text).strip():
-        return True
+    if not FASTTEXT_AVAILABLE or pd.isna(text) or not str(text).strip():
+        return None, 0
     
     s = str(text).strip()
     
-    # 太短的文本直接保留（避免误判）
-    if len(s) < 3:
-        return True
+    # 太短的文本，fastText 可能不准确，但仍尝试检测
+    if len(s) < 2:
+        return None, 0
     
     try:
-        # 使用 lingua 检测
-        detected = detector.detect_language_of(s)
+        # fastText 预测
+        predictions = fasttext_model.predict(s, k=3)  # 返回前3个预测结果
         
-        if detected is None:
-            # 无法检测时，检查是否包含目标语言特征
-            return False
+        # 解析结果
+        labels = predictions[0]
+        scores = predictions[1]
         
-        detected_code = detected.name.lower()
+        for label, score in zip(labels, scores):
+            # 提取语言代码（格式: __label__en）
+            lang_code = label.replace("__label__", "")
+            if lang_code in FASTTEXT_LANG_MAP:
+                return FASTTEXT_LANG_MAP[lang_code], score
         
-        # 检查是否匹配主要语言
-        is_match = (detected_code == target_lang)
-        
-        # 如果启用第二语言
-        if enable_second and second_lang:
-            is_match = is_match or (detected_code == second_lang)
-        
-        return is_match
+        return None, 0
         
     except Exception as e:
-        # 检测出错时，保守处理：保留文本
+        return None, 0
+
+def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
+    """
+    语言检测主函数
+    """
+    if pd.isna(text):
         return True
+
+    s = str(text).strip()
+
+    if len(s) < 2:
+        return True
+
+    # 使用 fastText 检测
+    detected_lang, confidence = detect_language_fasttext(s)
+    
+    if detected_lang is None:
+        # 如果 fastText 无法检测，使用备用方案：检查字符集
+        return fallback_detection(s, target_lang, second_lang, enable_second)
+    
+    # 检查是否匹配主要语言
+    is_match = (detected_lang == target_lang)
+    
+    # 如果启用第二语言
+    if enable_second and second_lang:
+        is_match = is_match or (detected_lang == second_lang)
+    
+    # 严格模式：置信度低于阈值则拒绝
+    if strict and confidence < 0.5:
+        return False
+    
+    return is_match
+
+def fallback_detection(text, target_lang, second_lang=None, enable_second=False):
+    """
+    备用检测方案（当 fastText 无法检测时使用）
+    基于字符集和常见词汇
+    """
+    s = str(text).lower()
+    
+    # 西语特征
+    spanish_chars = {'ñ', 'á', 'é', 'í', 'ó', 'ú', 'ü'}
+    spanish_words = {'el', 'la', 'los', 'las', 'de', 'en', 'que', 'y', 'o', 'por', 'para', 'con', 'sin', 'sobre', 'del', 'al', 'es', 'son', 'fue', 'fueron', 'tiene', 'puede', 'hace', 'se', 'me', 'te', 'nos', 'lo', 'le', 'les', 'mi', 'tu', 'su', 'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'muy', 'mucho', 'poco', 'mas', 'menos', 'bien', 'mal', 'si', 'no'}
+    
+    # 检查西语特殊字符
+    has_spanish_char = any(char in s for char in spanish_chars)
+    
+    # 检查西语常见词
+    words = re.findall(r'[a-záéíóúüñ]+', s)
+    spanish_word_count = sum(1 for word in words if word in spanish_words)
+    
+    # 判断是否为西语
+    is_spanish = has_spanish_char or spanish_word_count >= 1
+    
+    # 英语特征：纯 ASCII + 常见英语词
+    english_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'with', 'from', 'have', 'this', 'they', 'will', 'your', 'about', 'been', 'that', 'what', 'when', 'where', 'which'}
+    is_ascii = all(ord(c) < 128 for c in s)
+    english_word_count = sum(1 for word in words if word in english_words)
+    is_english = is_ascii and (english_word_count >= 1 or len(words) > 0)
+    
+    # 根据目标语言返回结果
+    if target_lang == "es":
+        return is_spanish
+    elif target_lang == "en":
+        return is_english
+    elif enable_second and second_lang:
+        if target_lang == "es" and second_lang == "en":
+            return is_spanish or is_english
+        elif target_lang == "en" and second_lang == "es":
+            return is_english or is_spanish
+    
+    # 默认返回 True（保留）
+    return True
 
 def batch_language_detection(
     texts,
@@ -189,7 +240,7 @@ def batch_language_detection(
     batch_size = 100
     
     for i, text in enumerate(texts):
-        is_match = detect_language(text, target_lang, second_lang, enable_second)
+        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
         results.append(is_match)
         
         if is_match:
@@ -209,7 +260,7 @@ def batch_language_detection(
     return results
 
 # =========================
-# 其他函数（保持不变）
+# 其他函数
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -297,6 +348,12 @@ def read_file_smart(uploaded_file):
 # Streamlit UI
 # =========================
 
+# 显示 fastText 状态
+if FASTTEXT_AVAILABLE:
+    st.sidebar.success("✅ fastText 已就绪")
+else:
+    st.sidebar.warning("⚠️ fastText 未就绪，将使用备用检测")
+
 # 语言选择
 col1, col2 = st.columns(2)
 
@@ -329,7 +386,7 @@ if enable_second_lang:
         strict_mode = st.checkbox(
             "🎯 严格模式", 
             value=False,
-            help="开启后更严格地过滤语言"
+            help="开启后更严格地过滤语言（置信度低于50%将被拒绝）"
         )
 else:
     with col2:
@@ -337,7 +394,7 @@ else:
         strict_mode = st.checkbox(
             "🎯 严格模式", 
             value=False,
-            help="开启后更严格地过滤语言"
+            help="开启后更严格地过滤语言（置信度低于50%将被拒绝）"
         )
 
 # 翻译选项
@@ -424,13 +481,9 @@ if start_btn:
                 for text in sample_texts:
                     if pd.isna(text):
                         continue
-                    try:
-                        detected = detector.detect_language_of(str(text).strip()[:100])
-                        if detected:
-                            lang_name = detected.name.lower()
-                            lang_counts[lang_name] = lang_counts.get(lang_name, 0) + 1
-                    except:
-                        pass
+                    detected_lang, _ = detect_language_fasttext(str(text).strip()[:100])
+                    if detected_lang:
+                        lang_counts[detected_lang] = lang_counts.get(detected_lang, 0) + 1
                 
                 if lang_counts:
                     lang_df = pd.DataFrame(
