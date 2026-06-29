@@ -56,22 +56,10 @@ except ImportError:
 # 语言映射
 # =========================
 language_options = {
-    "en": "英语",
-    "pt": "葡萄牙语",
-    "es": "西班牙语",
-    "de": "德语",
-    "fr": "法语",
-    "it": "意大利语",
-    "ja": "日语",
-    "ko": "韩语",
-    "zh": "中文",
-    "ru": "俄语",
-    "ar": "阿拉伯语",
-    "th": "泰语",
-    "id": "印尼语",
-    "tr": "土耳其语",
-    "pl": "波兰语",
-    "vi": "越南语"
+    "en": "英语", "pt": "葡萄牙语", "es": "西班牙语", "de": "德语",
+    "fr": "法语", "it": "意大利语", "ja": "日语", "ko": "韩语",
+    "zh": "中文", "ru": "俄语", "ar": "阿拉伯语", "th": "泰语",
+    "id": "印尼语", "tr": "土耳其语", "pl": "波兰语", "vi": "越南语"
 }
 
 FASTTEXT_LANG_MAP = {
@@ -82,43 +70,44 @@ FASTTEXT_LANG_MAP = {
 }
 
 # =========================
-# 通用语言检测函数（优化版）
+# 通用语言检测函数（带诊断信息的究极版）
 # =========================
-def detect_language_universal(text, target_lang, strict=False):
-    """
-    通用语言检测 - 引入严格模式，并修复单词检测的高误判率
-    """
-    if not FASTTEXT_AVAILABLE or pd.isna(text) or not str(text).strip():
-        return False
+def detect_language_universal_debug(text, target_lang, strict=False):
+    if not FASTTEXT_AVAILABLE or pd.isna(text):
+        return False, "空值或 fastText 未加载"
     
-    # 替换换行符（fastText对换行符很敏感，容易报错或影响判断）
-    s = str(text).strip().replace('\n', ' ')
+    # 🚨 致命修复：清除 \r、\n 等会导致 fastText 直接崩溃的隐藏字符
+    s = str(text).replace('\n', ' ').replace('\r', ' ').strip()
+    if not s:
+        return False, "纯符号或空字符串"
     
     try:
         if strict:
-            # 🎯 严格模式：只看整句的第一预测结果（Top-1）
+            # 严格模式
             predictions = fasttext_model.predict(s, k=1)
             label = predictions[0][0].replace("__label__", "")
+            score = predictions[1][0]
             if label in FASTTEXT_LANG_MAP and FASTTEXT_LANG_MAP[label] == target_lang:
-                return True
-            return False
+                return True, f"严格匹配: {label} ({score:.2f})"
+            return False, f"严格模式排斥: 判定为 {label} ({score:.2f})"
             
         else:
-            # 🌊 宽松模式：整句预测的前3名包含目标语言，且置信度达标 (> 0.15)
+            # 宽松模式
             predictions = fasttext_model.predict(s, k=3)
             labels = predictions[0]
             scores = predictions[1]
             
+            # 1. 优先查整句
             for label, score in zip(labels, scores):
                 lang_code = label.replace("__label__", "")
                 if lang_code in FASTTEXT_LANG_MAP:
                     detected = FASTTEXT_LANG_MAP[lang_code]
-                    if detected == target_lang and score > 0.15: 
-                        return True
+                    # 💡 降低要求：只要目标语言排进前3，且有一点点可能性(>0.05)，就放行 ASO 词汇
+                    if detected == target_lang and score > 0.05: 
+                        return True, f"宽松整句匹配: {detected} ({score:.2f})"
             
-            # 方法2作为兜底：拆分单词检测，但提高门槛防止全量放行
+            # 2. 单词兜底
             words = re.findall(r'[a-zA-ZÀ-ÿ]+', s)
-            # 过滤掉长度小于3的词（因为1-2个字母测语言纯属随机扔飞镖）
             valid_words = [w for w in words if len(w) >= 3] 
             
             for word in valid_words:
@@ -128,45 +117,46 @@ def detect_language_universal(text, target_lang, strict=False):
                 
                 if word_label in FASTTEXT_LANG_MAP:
                     detected = FASTTEXT_LANG_MAP[word_label]
-                    # 单词级检测必须非常严格，置信度必须大于 0.6 才能作数
-                    if detected == target_lang and word_score > 0.6:
-                        return True
-    except:
-        pass
-    
-    return False
+                    if detected == target_lang and word_score > 0.3:
+                        return True, f"单词兜底匹配: '{word}' -> {detected} ({word_score:.2f})"
+            
+            # 获取拒绝原因详情
+            debug_str = ", ".join([f"{l.replace('__label__', '')}({s:.2f})" for l, s in zip(labels, scores)])
+            return False, f"无目标语言特征。前三预测为: {debug_str}"
+            
+    except Exception as e:
+        # 不再静默失败，把报错抛出来看
+        return False, f"模型检测崩溃: {str(e)}"
 
-def is_target_language(text, target_lang, second_lang=None, enable_second=False, strict=False):
+def is_target_language_debug(text, target_lang, second_lang=None, enable_second=False, strict=False):
     if pd.isna(text):
-        return True
+        return True, "跳过空值"
 
     s = str(text).strip()
-
     if len(s) < 2:
-        return True
+        return True, "字符太短默认保留"
 
-    # 🚨 关键修复：把 strict 参数传递给底层检测函数
-    is_match = detect_language_universal(s, target_lang, strict=strict)
+    is_match, reason = detect_language_universal_debug(s, target_lang, strict=strict)
+    if is_match:
+        return True, reason
     
-    # 如果启用第二语言
-    if enable_second and second_lang and not is_match:
-        is_match = detect_language_universal(s, second_lang, strict=strict)
+    if enable_second and second_lang:
+        is_match2, reason2 = detect_language_universal_debug(s, second_lang, strict=strict)
+        if is_match2:
+            return True, reason2
+        return False, f"主语言拦截[{reason}] | 副语言拦截[{reason2}]"
     
-    return is_match
+    return False, reason
 
 # =========================
 # 批量检测
 # =========================
 def batch_language_detection(
-    texts,
-    target_lang,
-    progress_bar,
-    status_text,
-    second_lang=None,
-    enable_second=False,
-    strict=False
+    texts, target_lang, progress_bar, status_text, 
+    second_lang=None, enable_second=False, strict=False
 ):
     results = []
+    rejected_details = [] # 新增：收集被拒原因
     total = len(texts)
     rejected_count = 0
     kept_count = 0
@@ -174,27 +164,26 @@ def batch_language_detection(
     batch_size = 100
     
     for i, text in enumerate(texts):
-        is_match = is_target_language(text, target_lang, second_lang, enable_second, strict)
+        is_match, reason = is_target_language_debug(text, target_lang, second_lang, enable_second, strict)
         results.append(is_match)
         
         if is_match:
             kept_count += 1
         else:
             rejected_count += 1
+            # 收集前50个被排除的词和具体原因，供排查
+            if len(rejected_details) < 50:
+                rejected_details.append({"被拦截关键词": text, "AI 拦截原因诊断": reason})
 
         if (i + 1) % batch_size == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
+            status_text.text(f"🔍 检测中... {i+1}/{total} | 保留: {kept_count} | 排除: {rejected_count}")
 
-            lang_info = f" + {language_options[second_lang]}" if enable_second and second_lang else ""
-            status_text.text(
-                f"🔍 检测中... {i+1}/{total} ({int(pct*100)}%) | 保留: {kept_count} | 排除: {rejected_count}"
-            )
-
-    return results
+    return results, rejected_details
 
 # =========================
-# 其他函数
+# 品牌词与解析逻辑 (保持不变)
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -239,7 +228,7 @@ def batch_brand_filter(texts, brands, progress_bar, status_text):
         if (i + 1) % batch_size == 0 or i + 1 == total:
             pct = (i + 1) / total
             progress_bar.progress(pct)
-            status_text.text(f"🚫 品牌过滤中... {i+1}/{total} ({int(pct*100)}%)")
+            status_text.text(f"🚫 品牌过滤中... {i+1}/{total}")
     return results, removed_examples
 
 def read_file_smart(uploaded_file):
@@ -266,8 +255,6 @@ def read_file_smart(uploaded_file):
 # =========================
 # Streamlit UI
 # =========================
-
-# 显示状态
 if FASTTEXT_AVAILABLE:
     st.sidebar.success("✅ fastText 已就绪")
 else:
@@ -357,31 +344,31 @@ if start_btn:
 
         if skip_lang_detect:
             keep_mask = [True] * len(texts)
+            rejected_details = []
         else:
-            keep_mask = batch_language_detection(
-                texts,
-                target_language,
-                progress_bar,
-                status_text,
+            # 获取过滤掩码，同时拿到原因诊断
+            keep_mask, rejected_details = batch_language_detection(
+                texts, target_language, progress_bar, status_text,
                 second_language if enable_second_lang else None,
-                enable_second_lang,
-                strict_mode
+                enable_second_lang, strict_mode
             )
 
         df_filtered = df[keep_mask].copy()
 
         if brands:
-            keep_mask, removed_examples = batch_brand_filter(
-                df_filtered[keyword_column].tolist(),
-                brands,
-                progress_bar,
-                status_text
+            brand_keep_mask, removed_examples = batch_brand_filter(
+                df_filtered[keyword_column].tolist(), brands, progress_bar, status_text
             )
-            df_filtered = df_filtered[keep_mask].copy()
+            df_filtered = df_filtered[brand_keep_mask].copy()
             if removed_examples:
                 with st.expander("📝 被过滤的品牌词示例"):
                     for example in removed_examples:
                         st.write(f"- {example}")
+
+        # 💡 新增：被模型排查的日志透视（重点调试功能）
+        if rejected_details and not skip_lang_detect:
+            with st.expander("🩺 调试分析：点击查看为什么有些词被排除了（最多显示前 50 条）", expanded=True):
+                st.dataframe(pd.DataFrame(rejected_details))
 
         before_dedup = len(df_filtered)
         df_filtered = df_filtered.drop_duplicates(subset=[keyword_column])
@@ -389,7 +376,6 @@ if start_btn:
             st.info(f"🔄 去重: 移除 {before_dedup - len(df_filtered)} 条")
 
         if enable_translation and TRANSLATOR_AVAILABLE and len(df_filtered) > 0:
-            from deep_translator import GoogleTranslator
             status_text.text("🌐 准备翻译...")
             keywords = df_filtered[keyword_column].tolist()
             translations = []
@@ -404,7 +390,7 @@ if start_btn:
                 if (i + 1) % 100 == 0 or i + 1 == total:
                     pct = (i + 1) / total
                     progress_bar.progress(pct)
-                    status_text.text(f"🌐 翻译中... {i+1}/{total} ({int(pct*100)}%)")
+                    status_text.text(f"🌐 翻译中... {i+1}/{total}")
             
             col_index = df_filtered.columns.get_loc(keyword_column)
             df_filtered.insert(col_index + 1, 'english_translation', translations)
@@ -416,11 +402,8 @@ if start_btn:
         st.success(f"✨ 最终剩余 {len(df_filtered)} 条关键词")
         st.dataframe(df_filtered.head(100))
 
-        csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "📥 下载结果 CSV",
-            csv_data,
-            "filtered_keywords.csv",
-            "text/csv",
-            use_container_width=True
-        )
+        if len(df_filtered) > 0:
+            csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 下载结果 CSV", csv_data, "filtered_keywords.csv", "text/csv", use_container_width=True
+            )
