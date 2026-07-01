@@ -79,19 +79,17 @@ def detect_language_universal_debug(text, target_lang, strict=False):
     if not s:
         return False, "纯符号或空字符串"
 
-    # 🚨 新增：跨语系硬拦截（解决 "时代峰峻fanclub", "粤tv" 这种混血词漏网的问题）
-    # 正则匹配：中文、日文、韩文字符
+    # 🚨 新增：跨语系硬拦截（解决混血词漏网的问题）
     cjk_pattern = re.compile(r'[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
     has_cjk = bool(cjk_pattern.search(s))
     
-    # 如果目标语言是英语、德语、法语等纯字母语言，一旦包含中日韩字符，直接秒杀！
     non_cjk_targets = ["en", "pt", "es", "de", "fr", "it", "ru", "ar", "th", "id", "tr", "pl", "vi"]
     if target_lang in non_cjk_targets and has_cjk:
         return False, f"跨语系拦截: {target_lang} 模式下绝不允许包含中日韩字符"
 
     try:
         if strict:
-            # 严格模式：第一候选必须是目标语言
+            # 严格模式
             predictions = fasttext_model.predict(s, k=1)
             label = predictions[0][0].replace("__label__", "")
             score = predictions[1][0]
@@ -124,7 +122,6 @@ def detect_language_universal_debug(text, target_lang, strict=False):
                 
                 if word_label in FASTTEXT_LANG_MAP:
                     detected = FASTTEXT_LANG_MAP[word_label]
-                    # 单词匹配要求较高把握 (0.6以上)
                     if detected == target_lang and word_score > 0.6:
                         return True, f"单词兜底匹配: '{word}' -> {detected} ({word_score:.2f})"
             
@@ -136,38 +133,27 @@ def detect_language_universal_debug(text, target_lang, strict=False):
         return False, f"模型检测崩溃: {str(e)}"
 
 # =========================
-# 批量检测
+# 👇 就是下面这个函数被不小心删掉了，现在补回来！
 # =========================
-def batch_language_detection(
-    texts, target_lang, progress_bar, status_text, 
-    second_lang=None, enable_second=False, strict=False
-):
-    results = []
-    rejected_details = [] # 新增：收集被拒原因
-    total = len(texts)
-    rejected_count = 0
-    kept_count = 0
+def is_target_language_debug(text, target_lang, second_lang=None, enable_second=False, strict=False):
+    if pd.isna(text):
+        return True, "跳过空值"
 
-    batch_size = 100
+    s = str(text).strip()
+    if len(s) < 2:
+        return True, "字符太短默认保留"
+
+    is_match, reason = detect_language_universal_debug(s, target_lang, strict=strict)
+    if is_match:
+        return True, reason
     
-    for i, text in enumerate(texts):
-        is_match, reason = is_target_language_debug(text, target_lang, second_lang, enable_second, strict)
-        results.append(is_match)
-        
-        if is_match:
-            kept_count += 1
-        else:
-            rejected_count += 1
-            # 收集前50个被排除的词和具体原因，供排查
-            if len(rejected_details) < 50:
-                rejected_details.append({"被拦截关键词": text, "AI 拦截原因诊断": reason})
-
-        if (i + 1) % batch_size == 0 or i + 1 == total:
-            pct = (i + 1) / total
-            progress_bar.progress(pct)
-            status_text.text(f"🔍 检测中... {i+1}/{total} | 保留: {kept_count} | 排除: {rejected_count}")
-
-    return results, rejected_details
+    if enable_second and second_lang:
+        is_match2, reason2 = detect_language_universal_debug(s, second_lang, strict=strict)
+        if is_match2:
+            return True, reason2
+        return False, f"主语言拦截[{reason}] | 副语言拦截[{reason2}]"
+    
+    return False, reason
 
 # =========================
 # 品牌词与解析逻辑 (保持不变)
