@@ -68,6 +68,7 @@ FASTTEXT_LANG_MAP = {
     "zh": "zh", "ru": "ru", "ar": "ar", "th": "th",
     "id": "id", "tr": "tr", "pl": "pl", "vi": "vi"
 }
+
 # =========================
 # 通用语言检测函数（带跨语系硬拦截的终极版）
 # =========================
@@ -79,7 +80,7 @@ def detect_language_universal_debug(text, target_lang, strict=False):
     if not s:
         return False, "纯符号或空字符串"
 
-    # 🚨 新增：跨语系硬拦截（解决混血词漏网的问题）
+    # 🚨 跨语系硬拦截（解决混血词漏网的问题）
     cjk_pattern = re.compile(r'[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
     has_cjk = bool(cjk_pattern.search(s))
     
@@ -132,9 +133,6 @@ def detect_language_universal_debug(text, target_lang, strict=False):
     except Exception as e:
         return False, f"模型检测崩溃: {str(e)}"
 
-# =========================
-# 👇 就是下面这个函数被不小心删掉了，现在补回来！
-# =========================
 def is_target_language_debug(text, target_lang, second_lang=None, enable_second=False, strict=False):
     if pd.isna(text):
         return True, "跳过空值"
@@ -156,7 +154,40 @@ def is_target_language_debug(text, target_lang, second_lang=None, enable_second=
     return False, reason
 
 # =========================
-# 品牌词与解析逻辑 (保持不变)
+# 批量检测 
+# =========================
+def batch_language_detection(
+    texts, target_lang, progress_bar, status_text, 
+    second_lang=None, enable_second=False, strict=False
+):
+    results = []
+    rejected_details = [] 
+    total = len(texts)
+    rejected_count = 0
+    kept_count = 0
+
+    batch_size = 100
+    
+    for i, text in enumerate(texts):
+        is_match, reason = is_target_language_debug(text, target_lang, second_lang, enable_second, strict)
+        results.append(is_match)
+        
+        if is_match:
+            kept_count += 1
+        else:
+            rejected_count += 1
+            if len(rejected_details) < 50:
+                rejected_details.append({"被拦截关键词": text, "AI 拦截原因诊断": reason})
+
+        if (i + 1) % batch_size == 0 or i + 1 == total:
+            pct = (i + 1) / total
+            progress_bar.progress(pct)
+            status_text.text(f"🔍 检测中... {i+1}/{total} | 保留: {kept_count} | 排除: {rejected_count}")
+
+    return results, rejected_details
+
+# =========================
+# 品牌词与解析逻辑
 # =========================
 def parse_brands(raw_text):
     if not raw_text:
@@ -338,7 +369,6 @@ if start_btn:
                     for example in removed_examples:
                         st.write(f"- {example}")
 
-        # 💡 新增：被模型排查的日志透视（重点调试功能）
         if rejected_details and not skip_lang_detect:
             with st.expander("🩺 调试分析：点击查看为什么有些词被排除了（最多显示前 50 条）", expanded=True):
                 st.dataframe(pd.DataFrame(rejected_details))
