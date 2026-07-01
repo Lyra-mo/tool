@@ -68,22 +68,30 @@ FASTTEXT_LANG_MAP = {
     "zh": "zh", "ru": "ru", "ar": "ar", "th": "th",
     "id": "id", "tr": "tr", "pl": "pl", "vi": "vi"
 }
-
 # =========================
-# 通用语言检测函数（带诊断信息的究极版）
+# 通用语言检测函数（带跨语系硬拦截的终极版）
 # =========================
 def detect_language_universal_debug(text, target_lang, strict=False):
     if not FASTTEXT_AVAILABLE or pd.isna(text):
         return False, "空值或 fastText 未加载"
     
-    # 🚨 致命修复：清除 \r、\n 等会导致 fastText 直接崩溃的隐藏字符
     s = str(text).replace('\n', ' ').replace('\r', ' ').strip()
     if not s:
         return False, "纯符号或空字符串"
+
+    # 🚨 新增：跨语系硬拦截（解决 "时代峰峻fanclub", "粤tv" 这种混血词漏网的问题）
+    # 正则匹配：中文、日文、韩文字符
+    cjk_pattern = re.compile(r'[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
+    has_cjk = bool(cjk_pattern.search(s))
     
+    # 如果目标语言是英语、德语、法语等纯字母语言，一旦包含中日韩字符，直接秒杀！
+    non_cjk_targets = ["en", "pt", "es", "de", "fr", "it", "ru", "ar", "th", "id", "tr", "pl", "vi"]
+    if target_lang in non_cjk_targets and has_cjk:
+        return False, f"跨语系拦截: {target_lang} 模式下绝不允许包含中日韩字符"
+
     try:
         if strict:
-            # 严格模式
+            # 严格模式：第一候选必须是目标语言
             predictions = fasttext_model.predict(s, k=1)
             label = predictions[0][0].replace("__label__", "")
             score = predictions[1][0]
@@ -102,13 +110,12 @@ def detect_language_universal_debug(text, target_lang, strict=False):
                 lang_code = label.replace("__label__", "")
                 if lang_code in FASTTEXT_LANG_MAP:
                     detected = FASTTEXT_LANG_MAP[lang_code]
-                    # 💡 降低要求：只要目标语言排进前3，且有一点点可能性(>0.05)，就放行 ASO 词汇
-                    if detected == target_lang and score > 0.05: 
+                    if detected == target_lang and score > 0.25: 
                         return True, f"宽松整句匹配: {detected} ({score:.2f})"
             
-            # 2. 单词兜底
+            # 2. 单词兜底：提取纯字母单词进行检测
             words = re.findall(r'[a-zA-ZÀ-ÿ]+', s)
-            valid_words = [w for w in words if len(w) >= 3] 
+            valid_words = [w for w in words if len(w) >= 4] 
             
             for word in valid_words:
                 word_pred = fasttext_model.predict(word, k=1)
@@ -117,7 +124,8 @@ def detect_language_universal_debug(text, target_lang, strict=False):
                 
                 if word_label in FASTTEXT_LANG_MAP:
                     detected = FASTTEXT_LANG_MAP[word_label]
-                    if detected == target_lang and word_score > 0.3:
+                    # 单词匹配要求较高把握 (0.6以上)
+                    if detected == target_lang and word_score > 0.6:
                         return True, f"单词兜底匹配: '{word}' -> {detected} ({word_score:.2f})"
             
             # 获取拒绝原因详情
@@ -125,28 +133,7 @@ def detect_language_universal_debug(text, target_lang, strict=False):
             return False, f"无目标语言特征。前三预测为: {debug_str}"
             
     except Exception as e:
-        # 不再静默失败，把报错抛出来看
         return False, f"模型检测崩溃: {str(e)}"
-
-def is_target_language_debug(text, target_lang, second_lang=None, enable_second=False, strict=False):
-    if pd.isna(text):
-        return True, "跳过空值"
-
-    s = str(text).strip()
-    if len(s) < 2:
-        return True, "字符太短默认保留"
-
-    is_match, reason = detect_language_universal_debug(s, target_lang, strict=strict)
-    if is_match:
-        return True, reason
-    
-    if enable_second and second_lang:
-        is_match2, reason2 = detect_language_universal_debug(s, second_lang, strict=strict)
-        if is_match2:
-            return True, reason2
-        return False, f"主语言拦截[{reason}] | 副语言拦截[{reason2}]"
-    
-    return False, reason
 
 # =========================
 # 批量检测
