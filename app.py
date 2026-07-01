@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-import time
-import hashlib
 import os
 import urllib.request
 
@@ -70,7 +68,7 @@ FASTTEXT_LANG_MAP = {
 }
 
 # =========================
-# 通用语言检测函数（带跨语系硬拦截的终极版）
+# 通用语言检测函数（终极版）
 # =========================
 def detect_language_universal_debug(text, target_lang, strict=False):
     if not FASTTEXT_AVAILABLE or pd.isna(text):
@@ -80,13 +78,18 @@ def detect_language_universal_debug(text, target_lang, strict=False):
     if not s:
         return False, "纯符号或空字符串"
 
-    # 🚨 跨语系硬拦截（解决混血词漏网的问题）
+    # 🚨 1. 跨语系硬拦截（防中英混血词漏网）
     cjk_pattern = re.compile(r'[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]')
     has_cjk = bool(cjk_pattern.search(s))
     
     non_cjk_targets = ["en", "pt", "es", "de", "fr", "it", "ru", "ar", "th", "id", "tr", "pl", "vi"]
     if target_lang in non_cjk_targets and has_cjk:
         return False, f"跨语系拦截: {target_lang} 模式下绝不允许包含中日韩字符"
+
+    # 🟢 2. 纯英文字母特权通道 (ASO 品牌词防误杀，解决 roku, web video 误判)
+    if target_lang == "en":
+        if re.fullmatch(r'[a-zA-Z0-9\s\-_]+', s):
+            return True, "纯英文字母绿通道: 强制放行，避免 AI 误判品牌词"
 
     try:
         if strict:
@@ -135,11 +138,21 @@ def detect_language_universal_debug(text, target_lang, strict=False):
 
 def is_target_language_debug(text, target_lang, second_lang=None, enable_second=False, strict=False):
     if pd.isna(text):
-        return True, "跳过空值"
+        return False, "跳过空值"
 
     s = str(text).strip()
+    
+    # 🚨 动态单字符/单字拦截逻辑（完美兼容中文和英文）
     if len(s) < 2:
-        return True, "字符太短默认保留"
+        is_cjk = bool(re.match(r'[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]', s))
+        is_ascii = bool(re.fullmatch(r'[a-zA-Z0-9]', s))
+
+        if target_lang in ["zh", "ja", "ko"] and is_cjk:
+            return True, f"单字特权: 允许 {target_lang} 语系的合法单字保留"
+        elif target_lang not in ["zh", "ja", "ko"] and is_ascii:
+            return True, f"单字母特权: 允许字母/数字保留"
+        else:
+            return False, f"单字符跨语系拦截: 当前单字符不属于 {target_lang} 的合法范围"
 
     is_match, reason = detect_language_universal_debug(s, target_lang, strict=strict)
     if is_match:
@@ -154,7 +167,7 @@ def is_target_language_debug(text, target_lang, second_lang=None, enable_second=
     return False, reason
 
 # =========================
-# 批量检测 
+# 批量检测
 # =========================
 def batch_language_detection(
     texts, target_lang, progress_bar, status_text, 
@@ -176,7 +189,7 @@ def batch_language_detection(
             kept_count += 1
         else:
             rejected_count += 1
-            if len(rejected_details) < 50:
+            if len(rejected_details) < 100:  # 扩大了一点调试记录的数量
                 rejected_details.append({"被拦截关键词": text, "AI 拦截原因诊断": reason})
 
         if (i + 1) % batch_size == 0 or i + 1 == total:
@@ -370,7 +383,7 @@ if start_btn:
                         st.write(f"- {example}")
 
         if rejected_details and not skip_lang_detect:
-            with st.expander("🩺 调试分析：点击查看为什么有些词被排除了（最多显示前 50 条）", expanded=True):
+            with st.expander("🩺 调试分析：点击查看为什么有些词被排除了（最多显示前 100 条）", expanded=True):
                 st.dataframe(pd.DataFrame(rejected_details))
 
         before_dedup = len(df_filtered)
